@@ -1,3 +1,29 @@
+const https = require('https');
+
+function httpsGet(url, headers) {
+  return new Promise((resolve, reject) => {
+    https.get(url, { headers }, (response) => {
+      let rawData = '';
+      response.on('data', (chunk) => { rawData += chunk; });
+      response.on('end', () => {
+        resolve({
+          ok: response.statusCode >= 200 && response.statusCode < 300,
+          status: response.statusCode,
+          json: async () => {
+            try {
+              return JSON.parse(rawData);
+            } catch (e) {
+              throw new Error(`Failed to parse response JSON: ${rawData.substring(0, 150)}`);
+            }
+          }
+        });
+      });
+    }).on('error', (err) => {
+      reject(err);
+    });
+  });
+}
+
 module.exports = async function (req, res) {
   // Global CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -15,10 +41,10 @@ module.exports = async function (req, res) {
   };
 
   try {
-    // Query exact paths derived from official Cin7 documentation
+    // Query exact paths derived from official Cin7 documentation using native client
     const [productsRes, salesRes] = await Promise.allSettled([
-      fetch(`https://inventory.dearsystems.com/ExternalApi/v2/ProductAvailability?Search=${encodeURIComponent(query)}`, { headers }),
-      fetch(`https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(query)}`, { headers })
+      httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/ProductAvailability?Search=${encodeURIComponent(query)}`, headers),
+      httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(query)}`, headers)
     ]);
 
     let products = [];
@@ -40,6 +66,6 @@ module.exports = async function (req, res) {
 
     return res.status(200).json({ products, sales, priority });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to reach backend routing layers", details: error.message });
+    return res.status(500).json({ error: error.message || "Cin7 Request Failure" });
   }
 };
