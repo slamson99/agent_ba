@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent BA — Side Panel</title>
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Tailwind Custom Configuration -->
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0f4f9',
+              100: '#e1e8f2',
+              200: '#c2d2e5',
+              600: '#2c5e8f',
+              700: '#1f4469',
+              800: '#152d47',
+              900: '#0b1624',
+            },
+            medical: {
+              blue: '#0284c7', // Sky Blue 600
+              navy: '#0f172a', // Slate 900
+              slate: '#475569', // Slate 600
+              light: '#f8fafc', // Slate 50
+              accent: '#10b981' // Emerald 500 (Green Dot)
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* Custom thin scrollbar for extension side panel */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f8fafc;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 font-sans min-h-screen flex flex-col antialiased selection:bg-brand-200">
+
+  <!-- Top Header Banner -->
+  <header class="bg-slate-900 text-white px-4 py-3 shadow-md border-b border-slate-800 flex items-center justify-between sticky top-0 z-30">
+    <div class="flex items-center space-x-2">
+      <div class="w-6 h-6 rounded-md bg-sky-500 flex items-center justify-center font-bold text-xs text-white shadow-sm shadow-sky-500/50">
+        BA
+      </div>
+      <div>
+        <h1 class="text-sm font-bold tracking-tight">Agent BA</h1>
+        <div class="flex items-center space-x-1">
+          <span id="connection-indicator" class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span class="text-[10px] text-slate-400 font-medium">System Connectivity Live</span>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Settings Toggle Button -->
+    <button id="toggle-settings-btn" class="text-slate-400 hover:text-white transition-colors p-1 rounded-md hover:bg-slate-800 focus:outline-none" title="Configure Backend URL">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+      </svg>
+    </button>
+  </header>
+
+  <!-- Collapsible Settings Panel -->
+  <section id="settings-panel" class="hidden bg-slate-800 text-slate-200 border-b border-slate-700 px-4 py-3 transition-all duration-300">
+    <div class="space-y-2">
+      <label for="backend-url" class="block text-xs font-semibold uppercase tracking-wider text-slate-400">Backend API URL</label>
+      <div class="flex space-x-2">
+        <input type="url" id="backend-url" placeholder="https://your-vercel-app.vercel.app" class="bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-sky-500 focus:outline-none flex-grow text-white" />
+        <button id="save-settings-btn" class="bg-sky-600 hover:bg-sky-500 transition-colors text-white font-semibold text-xs px-3 py-1.5 rounded focus:outline-none shadow-sm">
+          Save
+        </button>
+      </div>
+      <p class="text-[10px] text-slate-400">Specify the deployed server url or http://localhost:3000 for local development.</p>
+    </div>
+  </section>
+
+  <!-- Main Content Container -->
+  <main class="flex-grow p-4 flex flex-col space-y-4 max-w-md mx-auto w-full">
+    
+    <!-- Search Box -->
+    <div class="relative">
+      <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+        <!-- Search Icon -->
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4.5 w-4.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+      </div>
+      <input type="text" id="global-search-input" placeholder="Search SKU, Order #, Invoice, or Customer..." class="w-full bg-white border border-slate-300 rounded-lg pl-9 pr-8 py-2.5 text-sm shadow-sm focus:border-sky-500 focus:ring-1 focus:ring-sky-500 focus:outline-none transition-all placeholder-slate-400" />
+      <!-- Clear Search Button -->
+      <button id="clear-search-btn" class="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 hidden">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+
+    <!-- Active Filter/Indicator (Heuristic Output Status) -->
+    <div id="search-triage-badge" class="hidden text-xs font-semibold px-2 py-1 rounded bg-sky-50 text-sky-800 border border-sky-200 self-start">
+      Triage Priority: <span id="triage-type" class="capitalize">Products</span>
+    </div>
+
+    <!-- Loading Spinner & Skeletons -->
+    <div id="loader" class="hidden flex flex-col items-center justify-center py-12 space-y-3">
+      <div class="relative w-10 h-10">
+        <div class="absolute inset-0 rounded-full border-4 border-slate-200"></div>
+        <div class="absolute inset-0 rounded-full border-4 border-sky-600 border-t-transparent animate-spin"></div>
+      </div>
+      <p class="text-xs font-medium text-slate-500">Querying Cin7 Core Ledger...</p>
+    </div>
+
+    <!-- Error Alert banner -->
+    <div id="error-banner" class="hidden bg-rose-50 border border-rose-200 rounded-lg p-3 flex items-start space-x-2 text-rose-800 text-xs">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-rose-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+      </svg>
+      <div class="flex-1">
+        <h4 class="font-bold">Fetch Interrupted</h4>
+        <p id="error-message" class="text-rose-600 mt-1">Failed to contact the server endpoint.</p>
+      </div>
+    </div>
+
+    <!-- Empty State -->
+    <div id="empty-state" class="flex flex-col items-center justify-center py-16 text-center space-y-3">
+      <div class="p-3 bg-slate-100 rounded-full text-slate-400">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+      </div>
+      <div>
+        <h3 class="text-xs font-bold text-slate-700">Ready to Query</h3>
+        <p class="text-[11px] text-slate-400 max-w-xs mt-1">Search results will populate automatically when a query matches product inventory or sales orders.</p>
+      </div>
+    </div>
+
+    <!-- Results Panel Container -->
+    <div id="results-panel" class="hidden flex flex-col space-y-4">
+      
+      <!-- Sales Section -->
+      <section id="sales-results" class="space-y-2 hidden">
+        <div class="flex items-center justify-between border-b border-slate-200 pb-1">
+          <h2 class="text-xs font-bold tracking-wider text-slate-500 uppercase flex items-center space-x-1">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+            <span>Sales Orders</span>
+          </h2>
+          <span id="sales-count" class="bg-slate-200 text-slate-700 text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span>
+        </div>
+        <div id="sales-list" class="space-y-3">
+          <!-- Sales Card (Generated by JS) -->
+        </div>
+      </section>
+
+      <!-- Products Section -->
+      <section id="products-results" class="space-y-2 hidden">
+        <div class="flex items-center justify-between border-b border-slate-200 pb-1">
+          <h2 class="text-xs font-bold tracking-wider text-slate-500 uppercase flex items-center space-x-1">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+            <span>Product Availability</span>
+          </h2>
+          <span id="products-count" class="bg-slate-200 text-slate-700 text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span>
+        </div>
+        <div id="products-table-container" class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+          <table class="w-full text-[11px] text-left border-collapse">
+            <thead class="bg-slate-100 border-b border-slate-200 text-slate-700 uppercase font-semibold text-[9px] tracking-wider">
+              <tr>
+                <th class="px-2.5 py-2">SKU</th>
+                <th class="px-2.5 py-2">Product Name</th>
+                <th class="px-2.5 py-2 text-right">On Hand</th>
+                <th class="px-2.5 py-2 text-right">Avail</th>
+              </tr>
+            </thead>
+            <tbody id="products-list">
+              <!-- Products Table Rows (Generated by JS) -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+    </div>
+
+  </main>
+
+  <footer class="bg-slate-100 border-t border-slate-200 px-4 py-2.5 text-center text-[10px] text-slate-500 sticky bottom-0 z-10 flex items-center justify-between">
+    <span>Agent BA Utility &bull; v1.0.0</span>
+    <span class="text-slate-400">Cin7 Core v2 Direct</span>
+  </footer>
+
+  <!-- Sidepanel JavaScript -->
+  <script src="sidepanel.js"></script>
+</body>
+</html>

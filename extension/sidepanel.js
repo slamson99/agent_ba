@@ -1,0 +1,373 @@
+// DOM Elements
+const searchInput = document.getElementById('global-search-input');
+const clearSearchBtn = document.getElementById('clear-search-btn');
+const loader = document.getElementById('loader');
+const errorBanner = document.getElementById('error-banner');
+const errorMessage = document.getElementById('error-message');
+const emptyState = document.getElementById('empty-state');
+const resultsPanel = document.getElementById('results-panel');
+const salesSection = document.getElementById('sales-results');
+const salesList = document.getElementById('sales-list');
+const salesCount = document.getElementById('sales-count');
+const productsSection = document.getElementById('products-results');
+const productsList = document.getElementById('products-list');
+const productsCount = document.getElementById('products-count');
+const searchTriageBadge = document.getElementById('search-triage-badge');
+const triageType = document.getElementById('triage-type');
+
+// Settings DOM Elements
+const toggleSettingsBtn = document.getElementById('toggle-settings-btn');
+const settingsPanel = document.getElementById('settings-panel');
+const backendUrlInput = document.getElementById('backend-url');
+const saveSettingsBtn = document.getElementById('save-settings-btn');
+
+// Constants
+const DEFAULT_BACKEND_URL = 'http://localhost:3000';
+let backendUrl = DEFAULT_BACKEND_URL;
+let searchDebounceTimeout = null;
+
+// Initialize Settings
+document.addEventListener('DOMContentLoaded', () => {
+  // Load backend URL from storage
+  if (chrome.storage && chrome.storage.local) {
+    chrome.storage.local.get(['backendUrl'], (result) => {
+      if (result.backendUrl) {
+        backendUrl = result.backendUrl;
+      }
+      backendUrlInput.value = backendUrl;
+    });
+  } else {
+    backendUrlInput.value = backendUrl;
+  }
+});
+
+// Toggle Settings Panel
+toggleSettingsBtn.addEventListener('click', () => {
+  settingsPanel.classList.toggle('hidden');
+});
+
+// Save Settings
+saveSettingsBtn.addEventListener('click', () => {
+  let url = backendUrlInput.value.trim();
+  if (url.endsWith('/')) {
+    url = url.slice(0, -1);
+  }
+  backendUrl = url;
+  
+  if (chrome.storage && chrome.storage.local) {
+    chrome.storage.local.set({ backendUrl: url }, () => {
+      showStatusAlert('Settings Saved Successfully', 'success');
+      settingsPanel.classList.add('hidden');
+    });
+  } else {
+    showStatusAlert('Saved (Memory Only)', 'warning');
+    settingsPanel.classList.add('hidden');
+  }
+});
+
+// Search Input listeners
+searchInput.addEventListener('input', () => {
+  const query = searchInput.value.trim();
+  
+  // Show/Hide Clear button
+  if (query.length > 0) {
+    clearSearchBtn.classList.remove('hidden');
+  } else {
+    clearSearchBtn.classList.add('hidden');
+    resetUI();
+    return;
+  }
+
+  // Debounce search requests
+  clearTimeout(searchDebounceTimeout);
+  searchDebounceTimeout = setTimeout(() => {
+    executeSearch(query);
+  }, 500); // 500ms delay
+});
+
+// Clear search handler
+clearSearchBtn.addEventListener('click', () => {
+  searchInput.value = '';
+  clearSearchBtn.classList.add('hidden');
+  resetUI();
+});
+
+// Instant Search on Enter key
+searchInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    clearTimeout(searchDebounceTimeout);
+    const query = searchInput.value.trim();
+    if (query.length > 0) {
+      executeSearch(query);
+    }
+  }
+});
+
+// Reset visual elements
+function resetUI() {
+  loader.classList.add('hidden');
+  errorBanner.classList.add('hidden');
+  resultsPanel.classList.add('hidden');
+  salesSection.classList.add('hidden');
+  productsSection.classList.add('hidden');
+  searchTriageBadge.classList.add('hidden');
+  emptyState.classList.remove('hidden');
+}
+
+// Perform API global search call
+async function executeSearch(query) {
+  if (!query) return;
+
+  // Show Loading state
+  loader.classList.remove('hidden');
+  errorBanner.classList.add('hidden');
+  emptyState.classList.add('hidden');
+  resultsPanel.classList.add('hidden');
+  searchTriageBadge.classList.add('hidden');
+
+  try {
+    const response = await fetch(`${backendUrl}/api/cin7/global-search?query=${encodeURIComponent(query)}`);
+    
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.error || `Server responded with status ${response.status}`);
+    }
+
+    const data = await response.json();
+    renderResults(data);
+
+  } catch (error) {
+    console.error("Search failed:", error);
+    loader.classList.add('hidden');
+    errorMessage.textContent = error.message || "Unable to reach server. Check backend URL configuration.";
+    errorBanner.classList.remove('hidden');
+  }
+}
+
+// Render dynamic results
+function renderResults(data) {
+  loader.classList.add('hidden');
+
+  const { sales, products, priority } = data;
+  const hasSales = sales && sales.length > 0;
+  const hasProducts = products && products.length > 0;
+
+  if (!hasSales && !hasProducts) {
+    emptyState.classList.remove('hidden');
+    return;
+  }
+
+  // Set up search triage badge
+  triageType.textContent = priority === 'sales' ? 'Sales Orders' : 'Product Availability';
+  searchTriageBadge.classList.remove('hidden');
+
+  // Reorder sections in the DOM based on priority heuristic
+  if (priority === 'sales') {
+    resultsPanel.appendChild(salesSection);
+    resultsPanel.appendChild(productsSection);
+  } else {
+    resultsPanel.appendChild(productsSection);
+    resultsPanel.appendChild(salesSection);
+  }
+
+  // Populate Sales section
+  if (hasSales) {
+    salesCount.textContent = sales.length;
+    salesList.innerHTML = '';
+    sales.forEach(sale => {
+      salesList.appendChild(createSaleCard(sale));
+    });
+    salesSection.classList.remove('hidden');
+  } else {
+    salesSection.classList.add('hidden');
+  }
+
+  // Populate Products section
+  if (hasProducts) {
+    productsCount.textContent = products.length;
+    productsList.innerHTML = '';
+    products.forEach(product => {
+      productsList.appendChild(createProductRow(product));
+    });
+    productsSection.classList.remove('hidden');
+  } else {
+    productsSection.classList.add('hidden');
+  }
+
+  resultsPanel.classList.remove('hidden');
+}
+
+// Generate Sale Card element
+function createSaleCard(sale) {
+  // Extract details (guarantee string values)
+  const saleId = sale.ID || sale.SaleID || '';
+  const orderNumber = sale.OrderNumber || 'Unassigned';
+  const status = sale.Status || 'Draft';
+  const trackingNumber = sale.TrackingNumber || sale.Tracking || 'N/A';
+  const customer = sale.Customer || 'Unknown Customer';
+
+  const card = document.createElement('div');
+  card.className = 'bg-white border border-slate-200 rounded-lg p-3 shadow-sm hover:border-slate-300 transition-colors flex flex-col space-y-2.5 text-xs';
+
+  card.innerHTML = `
+    <div class="flex justify-between items-start">
+      <div>
+        <h3 class="font-bold text-slate-800 text-[13px] flex items-center space-x-1.5">
+          <span>${orderNumber}</span>
+        </h3>
+        <p class="text-slate-500 font-medium text-[10px] mt-0.5">${customer}</p>
+      </div>
+      <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${getStatusBadgeClass(status)}">
+        ${status}
+      </span>
+    </div>
+
+    <div class="bg-slate-50 rounded border border-slate-100 px-2 py-1.5 flex justify-between items-center text-[10px]">
+      <span class="text-slate-500 font-medium">Tracking Number:</span>
+      <span class="font-bold text-slate-700 tracking-tight">${trackingNumber}</span>
+    </div>
+
+    <div class="grid grid-cols-2 gap-2 pt-1 border-t border-slate-100">
+      <button class="download-btn invoice shadow-sm bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded py-1 px-2 font-medium tracking-wide flex items-center justify-center space-x-1 transition-colors" data-id="${saleId}" data-type="Invoice">
+        <span>📥 Invoice</span>
+      </button>
+      <button class="download-btn packing-slip shadow-sm bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded py-1 px-2 font-medium tracking-wide flex items-center justify-center space-x-1 transition-colors" data-id="${saleId}" data-type="Packing Slip">
+        <span>📥 Packing Slip</span>
+      </button>
+    </div>
+
+    <button class="copy-summary-btn w-full bg-slate-800 hover:bg-slate-900 text-white border border-transparent rounded py-1.5 px-2 font-semibold tracking-wide flex items-center justify-center space-x-1 transition-colors shadow-sm" data-summary="Order: ${orderNumber} | Customer: ${customer} | Status: ${status} | Tracking: ${trackingNumber}">
+      <span>📋 Copy Quick Summary</span>
+    </button>
+  `;
+
+  // Attach event listeners to buttons
+  card.querySelectorAll('.download-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const type = btn.getAttribute('data-type');
+      const id = btn.getAttribute('data-id');
+      await downloadDocument(btn, id, type);
+    });
+  });
+
+  const copyBtn = card.querySelector('.copy-summary-btn');
+  copyBtn.addEventListener('click', () => {
+    const summaryText = copyBtn.getAttribute('data-summary');
+    navigator.clipboard.writeText(summaryText)
+      .then(() => {
+        const originalText = copyBtn.innerHTML;
+        copyBtn.innerHTML = '<span>Checkmark! Copied to Clipboard</span>';
+        copyBtn.classList.remove('bg-slate-800');
+        copyBtn.classList.add('bg-emerald-600');
+        setTimeout(() => {
+          copyBtn.innerHTML = originalText;
+          copyBtn.classList.remove('bg-emerald-600');
+          copyBtn.classList.add('bg-slate-800');
+        }, 2000);
+      })
+      .catch(err => {
+        console.error("Clipboard copy failed:", err);
+        showStatusAlert("Copy failed", "danger");
+      });
+  });
+
+  return card;
+}
+
+// Generate Product Row element
+function createProductRow(product) {
+  const row = document.createElement('tr');
+  row.className = 'border-b border-slate-200 hover:bg-slate-50 transition-colors';
+
+  const sku = product.SKU || 'N/A';
+  const name = product.Name || 'Unnamed Product';
+  const onHand = product.OnHand !== undefined ? product.OnHand : 0;
+  const available = product.Available !== undefined ? product.Available : 0;
+
+  row.innerHTML = `
+    <td class="px-2.5 py-2 font-semibold text-slate-800 tracking-tight">${sku}</td>
+    <td class="px-2.5 py-2 text-slate-600 truncate max-w-[120px]" title="${name}">${name}</td>
+    <td class="px-2.5 py-2 text-right font-medium text-slate-700">${onHand}</td>
+    <td class="px-2.5 py-2 text-right font-bold text-sky-700">${available}</td>
+  `;
+  return row;
+}
+
+// Download PDF blob from Backend
+async function downloadDocument(button, saleId, type) {
+  if (!saleId) {
+    showStatusAlert("Missing Sale ID", "danger");
+    return;
+  }
+
+  const originalContent = button.innerHTML;
+  button.disabled = true;
+  button.innerHTML = '<span>⏳ Downloading...</span>';
+
+  try {
+    const response = await fetch(`${backendUrl}/api/cin7/download-doc?saleId=${encodeURIComponent(saleId)}&documentType=${encodeURIComponent(type)}`);
+
+    if (!response.ok) {
+      const errJson = await response.json().catch(() => ({}));
+      throw new Error(errJson.error || `Download failed: status ${response.status}`);
+    }
+
+    const blob = await response.blob();
+    const blobUrl = window.URL.createObjectURL(blob);
+    
+    // Trigger browser file download
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = `${type.replace(/\s+/g, '_')}_${saleId}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    
+    // Clean up
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(blobUrl);
+
+    // Show Success state on button
+    button.innerHTML = '<span>✅ Ready</span>';
+    setTimeout(() => {
+      button.disabled = false;
+      button.innerHTML = originalContent;
+    }, 2000);
+
+  } catch (error) {
+    console.error("Document download failed:", error);
+    showStatusAlert(error.message || "Failed to retrieve PDF", "danger");
+    button.disabled = false;
+    button.innerHTML = originalContent;
+  }
+}
+
+// CSS class helpers for badges
+function getStatusBadgeClass(status) {
+  const normStatus = status.toLowerCase();
+  if (normStatus.includes('fulfill') || normStatus.includes('shipped') || normStatus.includes('complete')) {
+    return 'bg-emerald-50 text-emerald-700 border border-emerald-200';
+  }
+  if (normStatus.includes('order') || normStatus.includes('invoice')) {
+    return 'bg-sky-50 text-sky-700 border border-sky-200';
+  }
+  if (normStatus.includes('draft') || normStatus.includes('quote')) {
+    return 'bg-slate-50 text-slate-600 border border-slate-200';
+  }
+  return 'bg-amber-50 text-amber-700 border border-amber-200';
+}
+
+// Alert banner utility when chrome storage/action fails
+function showStatusAlert(msg, level) {
+  const alertDiv = document.createElement('div');
+  alertDiv.className = `fixed bottom-12 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full shadow-lg text-xs font-semibold z-50 transition-all transform scale-95 duration-200 ${
+    level === 'success' ? 'bg-emerald-600 text-white' : 
+    level === 'warning' ? 'bg-amber-500 text-slate-900' : 'bg-rose-600 text-white'
+  }`;
+  alertDiv.textContent = msg;
+  document.body.appendChild(alertDiv);
+  
+  setTimeout(() => {
+    alertDiv.classList.add('opacity-0', 'scale-90');
+    setTimeout(() => alertDiv.remove(), 300);
+  }, 2200);
+}

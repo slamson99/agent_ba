@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Agent BA",
+  "version": "1.0.0",
+  "description": "High-speed Chrome Extension utility connecting to Cin7 Core API v2.",
+  "permissions": [
+    "sidePanel",
+    "storage"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Open Agent BA"
+  },
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  }
+}

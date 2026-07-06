@@ -1,0 +1,24 @@
+# Dependency directories
+node_modules/
+dist/
+jspm_packages/
+
+# Vercel directories
+.vercel/
+
+# Sensitive files
+.env
+.env.local
+.env.*.local
+*.env
+
+# IDE and OS files
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+Thumbs.db
