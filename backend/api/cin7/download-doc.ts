@@ -34,7 +34,7 @@ export default async function handler(
 
   const escapedSaleId = encodeURIComponent(saleId);
   const escapedType = encodeURIComponent(documentType);
-  const documentUrl = `https://inventory.dearsystems.com/ExternalApi/v2/document?SaleID=${escapedSaleId}&Type=${escapedType}`;
+  const documentUrl = `https://inventory.dearsystems.com/ExternalApi/v2/sale/document?SaleID=${escapedSaleId}&Type=${escapedType}`;
 
   try {
     const cin7Response = await fetch(documentUrl, {

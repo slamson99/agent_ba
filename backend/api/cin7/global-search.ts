@@ -33,22 +33,28 @@ export default async function handler(
   };
 
   const escapedQuery = encodeURIComponent(query);
-  const salesUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?search=${escapedQuery}`;
-  const productsUrl = `https://inventory.dearsystems.com/ExternalApi/v2/ProductAvailability?Search=${escapedQuery}`;
+  
+  // Strict Cin7 Core V2 Base Paths
+  const salesUrl = `https://inventory.dearsystems.com/ExternalApi/v2/sale/list?Search=${escapedQuery}`;
+  const productsUrl = `https://inventory.dearsystems.com/ExternalApi/v2/inventory/productAvailability?Search=${escapedQuery}`;
+  const customersUrl = `https://inventory.dearsystems.com/ExternalApi/v2/customer?Name=${escapedQuery}`;
 
   try {
-    // Perform concurrent requests
-    const [salesResult, productsResult] = await Promise.allSettled([
+    // Perform concurrent requests across all three endpoints
+    const [salesResult, productsResult, customersResult] = await Promise.allSettled([
       fetch(salesUrl, { method: 'GET', headers }),
-      fetch(productsUrl, { method: 'GET', headers })
+      fetch(productsUrl, { method: 'GET', headers }),
+      fetch(customersUrl, { method: 'GET', headers })
     ]);
 
     let salesData: any = null;
     let productsData: any = null;
+    let customersData: any = null;
     let salesError = null;
     let productsError = null;
+    let customersError = null;
 
-    // Handle Sales request result
+    // Handle Sales response
     if (salesResult.status === 'fulfilled') {
       const response = salesResult.value;
       if (response.ok) {
@@ -61,7 +67,7 @@ export default async function handler(
       salesError = salesResult.reason?.message || "Unknown error fetching Sales list";
     }
 
-    // Handle Products request result
+    // Handle Products response
     if (productsResult.status === 'fulfilled') {
       const response = productsResult.value;
       if (response.ok) {
@@ -74,12 +80,25 @@ export default async function handler(
       productsError = productsResult.reason?.message || "Unknown error fetching Product Availability";
     }
 
-    // Normalize outputs to handle either array structure or standard Cin7 response wrapper
+    // Handle Customers response
+    if (customersResult.status === 'fulfilled') {
+      const response = customersResult.value;
+      if (response.ok) {
+        customersData = await response.json();
+      } else {
+        const text = await response.text();
+        customersError = `Cin7 Customer API returned status ${response.status}: ${text}`;
+      }
+    } else {
+      customersError = customersResult.reason?.message || "Unknown error fetching Customers list";
+    }
+
+    // Normalize arrays from Cin7 REST structures
     const sales = salesData?.SaleList || salesData?.sales || (Array.isArray(salesData) ? salesData : []);
     const products = productsData?.ProductAvailabilityList || productsData?.products || (Array.isArray(productsData) ? productsData : []);
+    const customers = customersData?.CustomerList || customersData?.customers || (Array.isArray(customersData) ? customersData : []);
 
-    // Heuristic Sorting Logic
-    // If the query starts with 'SO-' (case insensitive) or consists of only digits, prioritize sales
+    // Heuristic Sorting Logic: Prioritize sales if it looks like a Sales Order reference (e.g. starts with 'SO-' or only digits)
     const isSalesPattern = /^so-/i.test(query) || /^\d+$/.test(query.trim());
     const priority = isSalesPattern ? 'sales' : 'products';
 
@@ -88,15 +107,17 @@ export default async function handler(
       priority,
       sales,
       products,
+      customers,
       errors: {
         sales: salesError,
-        products: productsError
+        products: productsError,
+        customers: customersError
       }
     });
 
   } catch (error: any) {
     return res.status(500).json({
-      error: "Internal server error occurred while processing search.",
+      error: "Internal server error occurred while processing global search.",
       details: error.message || error
     });
   }
