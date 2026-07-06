@@ -4,35 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Agent BA — Side Panel</title>
-  <!-- Tailwind CSS via CDN -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Tailwind Custom Configuration -->
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            brand: {
-              50: '#f0f4f9',
-              100: '#e1e8f2',
-              200: '#c2d2e5',
-              600: '#2c5e8f',
-              700: '#1f4469',
-              800: '#152d47',
-              900: '#0b1624',
-            },
-            medical: {
-              blue: '#0284c7', // Sky Blue 600
-              navy: '#0f172a', // Slate 900
-              slate: '#475569', // Slate 600
-              light: '#f8fafc', // Slate 50
-              accent: '#10b981' // Emerald 500 (Green Dot)
-            }
-          }
-        }
-      }
-    }
-  </script>
+  <!-- Local Tailwind CSS -->
+  <link rel="stylesheet" href="tailwind.css">
   <style>
     /* Custom thin scrollbar for extension side panel */
     ::-webkit-scrollbar {
@@ -50,7 +23,7 @@
     }
   </style>
 </head>
-<body class="bg-slate-50 text-slate-900 font-sans min-h-screen flex flex-col antialiased selection:bg-brand-200">
+<body class="bg-slate-50 text-slate-900 font-sans min-h-screen flex flex-col antialiased selection:bg-sky-200">
 
   <!-- Top Header Banner -->
   <header class="bg-slate-900 text-white px-4 py-3 shadow-md border-b border-slate-800 flex items-center justify-between sticky top-0 z-30">
