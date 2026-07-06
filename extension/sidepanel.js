@@ -126,7 +126,7 @@ async function executeSearch(query) {
   searchTriageBadge.classList.add('hidden');
 
   const sanitizedUrl = backendUrl.replace(/\/$/, '');
-  const searchUrl = `${sanitizedUrl}/api/cin7/global-search?query=${encodeURIComponent(query)}`;
+  const searchUrl = `${sanitizedUrl}/api/global-search?query=${encodeURIComponent(query)}`;
 
   try {
     const response = await fetch(searchUrl);
@@ -324,7 +324,7 @@ async function downloadDocument(button, saleId, type) {
   button.innerHTML = '<span>⏳ Downloading...</span>';
 
   const sanitizedUrl = backendUrl.replace(/\/$/, '');
-  const downloadUrl = `${sanitizedUrl}/api/cin7/download-doc?saleId=${encodeURIComponent(saleId)}&documentType=${encodeURIComponent(type)}`;
+  const downloadUrl = `${sanitizedUrl}/api/download-doc?saleId=${encodeURIComponent(saleId)}&documentType=${encodeURIComponent(type)}`;
 
   try {
     const response = await fetch(downloadUrl);
