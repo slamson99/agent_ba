@@ -155,6 +155,18 @@ async function executeSearch(query) {
 function renderResults(data) {
   loader.classList.add('hidden');
 
+  // Notify user of any backend partial failures
+  if (data.errors) {
+    const failedApis = [];
+    if (data.errors.sales) failedApis.push('Sales Orders');
+    if (data.errors.products) failedApis.push('Products');
+    if (data.errors.customers) failedApis.push('Customers');
+    if (failedApis.length > 0) {
+      console.warn("Backend API partial failures:", data.errors);
+      showStatusAlert(`Warning: Failed to retrieve ${failedApis.join(', ')} from Cin7`, 'warning');
+    }
+  }
+
   const { sales, products, priority } = data;
   const hasSales = sales && sales.length > 0;
   const hasProducts = products && products.length > 0;
@@ -220,30 +232,30 @@ function createSaleCard(sale) {
     <div class="flex justify-between items-start">
       <div>
         <h3 class="font-bold text-slate-800 text-[13px] flex items-center space-x-1.5">
-          <span>${orderNumber}</span>
+          <span>${escapeHTML(orderNumber)}</span>
         </h3>
-        <p class="text-slate-500 font-medium text-[10px] mt-0.5">${customer}</p>
+        <p class="text-slate-500 font-medium text-[10px] mt-0.5">${escapeHTML(customer)}</p>
       </div>
       <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${getStatusBadgeClass(status)}">
-        ${status}
+        ${escapeHTML(status)}
       </span>
     </div>
 
     <div class="bg-slate-50 rounded border border-slate-100 px-2 py-1.5 flex justify-between items-center text-[10px]">
       <span class="text-slate-500 font-medium">Tracking Number:</span>
-      <span class="font-bold text-slate-700 tracking-tight">${trackingNumber}</span>
+      <span class="font-bold text-slate-700 tracking-tight">${escapeHTML(trackingNumber)}</span>
     </div>
 
     <div class="grid grid-cols-2 gap-2 pt-1 border-t border-slate-100">
-      <button class="download-btn invoice shadow-sm bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded py-1 px-2 font-medium tracking-wide flex items-center justify-center space-x-1 transition-colors" data-id="${saleId}" data-type="Invoice">
+      <button class="download-btn invoice shadow-sm bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded py-1 px-2 font-medium tracking-wide flex items-center justify-center space-x-1 transition-colors" data-id="${escapeHTML(saleId)}" data-type="Invoice">
         <span>📥 Invoice</span>
       </button>
-      <button class="download-btn packing-slip shadow-sm bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded py-1 px-2 font-medium tracking-wide flex items-center justify-center space-x-1 transition-colors" data-id="${saleId}" data-type="Packing Slip">
+      <button class="download-btn packing-slip shadow-sm bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded py-1 px-2 font-medium tracking-wide flex items-center justify-center space-x-1 transition-colors" data-id="${escapeHTML(saleId)}" data-type="Packing Slip">
         <span>📥 Packing Slip</span>
       </button>
     </div>
 
-    <button class="copy-summary-btn w-full bg-slate-800 hover:bg-slate-900 text-white border border-transparent rounded py-1.5 px-2 font-semibold tracking-wide flex items-center justify-center space-x-1 transition-colors shadow-sm" data-summary="Order: ${orderNumber} | Customer: ${customer} | Status: ${status} | Tracking: ${trackingNumber}">
+    <button class="copy-summary-btn w-full bg-slate-800 hover:bg-slate-900 text-white border border-transparent rounded py-1.5 px-2 font-semibold tracking-wide flex items-center justify-center space-x-1 transition-colors shadow-sm" data-summary="Order: ${escapeHTML(orderNumber)} | Customer: ${escapeHTML(customer)} | Status: ${escapeHTML(status)} | Tracking: ${escapeHTML(trackingNumber)}">
       <span>📋 Copy Quick Summary</span>
     </button>
   `;
@@ -263,7 +275,7 @@ function createSaleCard(sale) {
     navigator.clipboard.writeText(summaryText)
       .then(() => {
         const originalText = copyBtn.innerHTML;
-        copyBtn.innerHTML = '<span>Checkmark! Copied to Clipboard</span>';
+        copyBtn.innerHTML = '<span>✅ Copied to Clipboard</span>';
         copyBtn.classList.remove('bg-slate-800');
         copyBtn.classList.add('bg-emerald-600');
         setTimeout(() => {
@@ -292,8 +304,8 @@ function createProductRow(product) {
   const available = product.Available !== undefined ? product.Available : 0;
 
   row.innerHTML = `
-    <td class="px-2.5 py-2 font-semibold text-slate-800 tracking-tight">${sku}</td>
-    <td class="px-2.5 py-2 text-slate-600 truncate max-w-[120px]" title="${name}">${name}</td>
+    <td class="px-2.5 py-2 font-semibold text-slate-800 tracking-tight">${escapeHTML(sku)}</td>
+    <td class="px-2.5 py-2 text-slate-600 truncate max-w-[120px]" title="${escapeHTML(name)}">${escapeHTML(name)}</td>
     <td class="px-2.5 py-2 text-right font-medium text-slate-700">${onHand}</td>
     <td class="px-2.5 py-2 text-right font-bold text-sky-700">${available}</td>
   `;
@@ -384,4 +396,15 @@ function showStatusAlert(msg, level) {
     alertDiv.classList.add('opacity-0', 'scale-90');
     setTimeout(() => alertDiv.remove(), 300);
   }, 2200);
+}
+
+// Helper to escape HTML special characters to prevent attribute and script injection issues
+function escapeHTML(str) {
+  if (typeof str !== 'string') return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }

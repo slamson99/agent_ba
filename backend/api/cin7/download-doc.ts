@@ -52,16 +52,14 @@ export default async function handler(
 
     const contentType = cin7Response.headers.get('content-type') || '';
 
-    // Set headers for download
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${documentType.replace(/\s+/g, '_')}_${saleId}.pdf"`);
-
     if (contentType.includes('application/json')) {
       const json = (await cin7Response.json()) as any;
       // Handle base64 encoded document content if wrapped in JSON
       const base64Data = json.Content || json.FileBytes || json.data || json.content;
       if (base64Data) {
         const buffer = Buffer.from(base64Data, 'base64');
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${documentType.replace(/\s+/g, '_')}_${saleId}.pdf"`);
         return res.status(200).send(buffer);
       } else {
         // Fallback if JSON format but no recognizable base64 field found
@@ -74,6 +72,8 @@ export default async function handler(
       // Stream raw binary PDF directly
       const arrayBuffer = await cin7Response.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${documentType.replace(/\s+/g, '_')}_${saleId}.pdf"`);
       return res.status(200).send(buffer);
     }
 
