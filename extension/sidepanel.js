@@ -125,8 +125,15 @@ async function executeSearch(query) {
   resultsPanel.classList.add('hidden');
   searchTriageBadge.classList.add('hidden');
 
+  const sanitizedUrl = backendUrl.replace(/\/$/, '');
+  const searchUrl = `${sanitizedUrl}/api/cin7/global-search?query=${encodeURIComponent(query)}`;
+
   try {
-    const response = await fetch(`${backendUrl}/api/cin7/global-search?query=${encodeURIComponent(query)}`);
+    const response = await fetch(searchUrl);
+    
+    if (response.status === 404) {
+      throw new Error("404 Error: Please check that your saved Backend URL includes the right domain root, and your backend functions are fully deployed.");
+    }
     
     if (!response.ok) {
       const errData = await response.json().catch(() => ({}));
@@ -304,8 +311,15 @@ async function downloadDocument(button, saleId, type) {
   button.disabled = true;
   button.innerHTML = '<span>⏳ Downloading...</span>';
 
+  const sanitizedUrl = backendUrl.replace(/\/$/, '');
+  const downloadUrl = `${sanitizedUrl}/api/cin7/download-doc?saleId=${encodeURIComponent(saleId)}&documentType=${encodeURIComponent(type)}`;
+
   try {
-    const response = await fetch(`${backendUrl}/api/cin7/download-doc?saleId=${encodeURIComponent(saleId)}&documentType=${encodeURIComponent(type)}`);
+    const response = await fetch(downloadUrl);
+
+    if (response.status === 404) {
+      throw new Error("404 Error: Please check that your saved Backend URL includes the right domain root, and your backend functions are fully deployed.");
+    }
 
     if (!response.ok) {
       const errJson = await response.json().catch(() => ({}));
