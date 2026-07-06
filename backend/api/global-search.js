@@ -1,5 +1,13 @@
-export default async function handler(req, res) {
-  // 1. Force Global CORS Handshake Compliance
+const fetch = globalThis.fetch || (() => {
+  try {
+    return require('node-fetch');
+  } catch (e) {
+    return null;
+  }
+})();
+
+module.exports = async function (req, res) {
+  // 1. Force Broad CORS Handshake Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -15,7 +23,7 @@ export default async function handler(req, res) {
   };
 
   try {
-    // 2. Query official Apiary endpoints concurrently
+    // 2. Perform concurrent queries against official Apiary v2 endpoints
     const [productsRes, salesRes] = await Promise.allSettled([
       fetch(`https://inventory.dearsystems.com/ExternalApi/v2/ProductAvailability?Search=${encodeURIComponent(query)}`, { headers }),
       fetch(`https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(query)}`, { headers })
@@ -23,6 +31,7 @@ export default async function handler(req, res) {
 
     let products = [];
     let sales = [];
+    let priority = 'products';
 
     if (productsRes.status === 'fulfilled' && productsRes.value.ok) {
       const data = await productsRes.value.json();
@@ -33,8 +42,13 @@ export default async function handler(req, res) {
       sales = data.SaleList || [];
     }
 
-    return res.status(200).json({ products, sales });
+    // Heuristic triage sorting rules
+    if (/^[a-zA- Caring\-SO\d]+$/i.test(query) || query.toUpperCase().startsWith('SO-')) {
+      priority = 'sales';
+    }
+
+    return res.status(200).json({ products, sales, priority });
   } catch (error) {
     return res.status(500).json({ error: "Failed to query Cin7 API", details: error.message });
   }
-}
+};
