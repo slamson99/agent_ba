@@ -22,7 +22,7 @@ const backendUrlInput = document.getElementById('backend-url');
 const saveSettingsBtn = document.getElementById('save-settings-btn');
 
 // Constants
-const DEFAULT_BACKEND_URL = 'http://localhost:3000';
+const DEFAULT_BACKEND_URL = 'https://agent-ba.vercel.app';
 let backendUrl = DEFAULT_BACKEND_URL;
 let searchDebounceTimeout = null;
 
