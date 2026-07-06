@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/*.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    { "src": "/api/global-search", "dest": "api/global-search.js" },
+    { "src": "/api/download-doc", "dest": "api/download-doc.js" }
+  ]
+}

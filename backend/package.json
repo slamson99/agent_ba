@@ -1,15 +1,11 @@
 {
   "name": "agent-ba-backend",
   "version": "1.0.0",
-  "description": "Secure Vercel middleware backend for Agent BA",
-  "private": true,
-  "scripts": {
-    "dev": "vercel dev"
+  "main": "api/global-search.js",
+  "dependencies": {
+    "node-fetch": "^2.7.0"
   },
-  "dependencies": {},
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "@vercel/node": "^3.0.0",
-    "typescript": "^5.0.0"
+    "@vercel/node": "^3.0.0"
   }
 }
