@@ -6,18 +6,8 @@ const errorBanner = document.getElementById('error-banner');
 const errorMessage = document.getElementById('error-message');
 const emptyState = document.getElementById('empty-state');
 const resultsPanel = document.getElementById('results-panel');
-const salesSection = document.getElementById('sales-results');
-const salesList = document.getElementById('sales-list');
-const salesCount = document.getElementById('sales-count');
-const productsSection = document.getElementById('products-results');
-const productsList = document.getElementById('products-list');
-const productsCount = document.getElementById('products-count');
 const searchTriageBadge = document.getElementById('search-triage-badge');
 const triageType = document.getElementById('triage-type');
-
-// Tab DOM Elements
-const tabSales = document.getElementById('tab-sales');
-const tabProducts = document.getElementById('tab-products');
 
 // Pagination DOM Elements
 const paginationControls = document.getElementById('pagination-controls');
@@ -31,19 +21,18 @@ const settingsPanel = document.getElementById('settings-panel');
 const backendUrlInput = document.getElementById('backend-url');
 const saveSettingsBtn = document.getElementById('save-settings-btn');
 
-// Constants & Overhauled Filtering/Pagination State
+const filterSortSelect = document.getElementById('filter-sort');
+
+// Constants & State Configuration
 const DEFAULT_BACKEND_URL = 'https://agent-ba.vercel.app';
 let backendUrl = DEFAULT_BACKEND_URL;
 
-let activeScope = 'sales'; // Default active tab scope
-let currentResults = null; // Full dataset cached in memory
-const PAGE_SIZE = 10;      // Enforce limit of 10 items per page
+let currentResults = null; // Full unified dataset cached in memory
+const PAGE_SIZE = 10;      // Strictly 10 slots per page
 let currentPage = 1;
 let searchDebounceTimeout = null;
 
-const filterSortSelect = document.getElementById('filter-sort');
-
-// Relevance logic for default sorting ranking
+// Relevance matching scoring
 function getRelevanceScore(name, query) {
   if (!name || !query) return 0;
   const n = name.toLowerCase();
@@ -56,7 +45,6 @@ function getRelevanceScore(name, query) {
 
 // Initialize Settings
 document.addEventListener('DOMContentLoaded', () => {
-  // Load backend URL from storage
   if (chrome.storage && chrome.storage.local) {
     chrome.storage.local.get(['backendUrl'], (result) => {
       if (result.backendUrl) {
@@ -77,38 +65,6 @@ document.addEventListener('click', (e) => {
   }
 });
 
-// Tab Switch Click Handlers
-if (tabSales) {
-  tabSales.addEventListener('click', () => selectTab('sales'));
-}
-if (tabProducts) {
-  tabProducts.addEventListener('click', () => selectTab('products'));
-}
-
-function selectTab(scope) {
-  const scopeLower = (scope || '').toLowerCase();
-  if (activeScope === scopeLower) return;
-  activeScope = scopeLower;
-  currentPage = 1;
-
-  // Instantly toggle active tab visual classes
-  if (activeScope === 'sales') {
-    tabSales.className = "flex-1 py-2.5 text-center border-b-2 border-slate-800 bg-white text-slate-800 focus:outline-none";
-    tabProducts.className = "flex-1 py-2.5 text-center border-b-2 border-transparent text-slate-500 hover:text-slate-800 focus:outline-none";
-  } else {
-    tabProducts.className = "flex-1 py-2.5 text-center border-b-2 border-slate-800 bg-white text-slate-800 focus:outline-none";
-    tabSales.className = "flex-1 py-2.5 text-center border-b-2 border-transparent text-slate-500 hover:text-slate-800 focus:outline-none";
-  }
-
-  // Refresh results with scope context
-  const query = searchInput.value.trim();
-  if (query.length > 0) {
-    executeSearch(query);
-  } else {
-    resetUI();
-  }
-}
-
 // Pagination Controls Handlers
 if (prevPageBtn) {
   prevPageBtn.addEventListener('click', () => {
@@ -120,8 +76,8 @@ if (prevPageBtn) {
 }
 if (nextPageBtn) {
   nextPageBtn.addEventListener('click', () => {
-    const items = activeScope === 'sales' ? (currentResults.sales || []) : (currentResults.products || []);
-    const totalPages = Math.ceil(items.length / PAGE_SIZE) || 1;
+    const combinedItems = getCombinedSortedItems();
+    const totalPages = Math.ceil(combinedItems.length / PAGE_SIZE) || 1;
     if (currentPage < totalPages) {
       currentPage++;
       applyFilterAndRender();
@@ -153,11 +109,10 @@ saveSettingsBtn.addEventListener('click', () => {
   }
 });
 
-// Re-Wire search input trigger listener
+// Search input trigger listener with debouncing
 searchInput.addEventListener('input', () => {
   const query = searchInput.value.trim();
   
-  // Show/Hide Clear button
   if (query.length > 0) {
     clearSearchBtn.classList.remove('hidden');
   } else {
@@ -167,19 +122,19 @@ searchInput.addEventListener('input', () => {
     return;
   }
 
-  // 1. Lightweight auto-suggestions dropdown (Instant local filtering)
+  // 1. Lightweight suggestions overlay (in-memory)
   if (query.length > 2) {
     showSuggestions(query);
   } else {
     hideSuggestions();
   }
 
-  // 2. Active Execution search pipeline: Trigger execution debounced
+  // 2. Active Search Pipeline: Trigger execution debounced
   if (query.length > 2) {
     clearTimeout(searchDebounceTimeout);
     searchDebounceTimeout = setTimeout(() => {
       executeSearch(query);
-    }, 400); // 400ms delay to prevent spamming backend
+    }, 400);
   }
 });
 
@@ -191,7 +146,7 @@ clearSearchBtn.addEventListener('click', () => {
   hideSuggestions();
 });
 
-// Instant Search on Enter key (Bypasses debounce delay)
+// Instant Search on Enter key
 searchInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') {
     const query = searchInput.value.trim();
@@ -224,7 +179,6 @@ function showSuggestions(query) {
     return;
   }
 
-  // Verify Case-Insensitive Suggestion Rendering Lowercase Casing
   const qLower = query.toLowerCase();
   
   // Instantly filter local cached dataset case-insensitively
@@ -294,11 +248,14 @@ function resetUI() {
   loader.classList.add('hidden');
   errorBanner.classList.add('hidden');
   resultsPanel.classList.add('hidden');
-  salesSection.classList.add('hidden');
-  productsSection.classList.add('hidden');
   searchTriageBadge.classList.add('hidden');
   paginationControls.classList.add('hidden');
   emptyState.classList.remove('hidden');
+  
+  // Clear any existing unified results lists
+  const resultsList = document.getElementById('unified-results-list');
+  if (resultsList) resultsList.innerHTML = '';
+  
   currentResults = null;
   currentPage = 1;
 }
@@ -307,7 +264,6 @@ function resetUI() {
 async function executeSearch(query) {
   if (!query) return;
 
-  // Force active loader execution (bypasses empty views)
   loader.classList.remove('hidden');
   errorBanner.classList.add('hidden');
   emptyState.classList.add('hidden');
@@ -316,9 +272,7 @@ async function executeSearch(query) {
   paginationControls.classList.add('hidden');
 
   const sanitizedUrl = backendUrl.replace(/\/$/, '');
-  
-  // Tab isolation logic parameter mapping
-  const searchUrl = `${sanitizedUrl}/api/global-search?query=${encodeURIComponent(query)}&scope=${activeScope}`;
+  const searchUrl = `${sanitizedUrl}/api/global-search?query=${encodeURIComponent(query)}`;
 
   try {
     const response = await fetch(searchUrl);
@@ -348,108 +302,88 @@ async function executeSearch(query) {
 if (filterSortSelect) {
   filterSortSelect.addEventListener('change', () => {
     if (!currentResults) return;
-    currentPage = 1; // Reset to page 1 on filter change
+    currentPage = 1;
     applyFilterAndRender();
   });
 }
 
-function applyFilterAndRender() {
+// Combine and sort sales and products datasets into a unified array
+function getCombinedSortedItems() {
+  if (!currentResults) return [];
+  
   const sortVal = filterSortSelect ? filterSortSelect.value : 'default';
   const queryText = searchInput.value.trim().toLowerCase();
-  
-  // Clone results to avoid mutating original state
-  const dataCopy = {
-    ...currentResults,
-    sales: currentResults.sales ? [...currentResults.sales] : [],
-    products: currentResults.products ? [...currentResults.products] : []
-  };
 
-  // Sort Sales
-  if (dataCopy.sales.length > 0) {
-    if (sortVal === 'default') {
-      // Smart sorting: Relevance first (exact/prefix top), fall back to OrderDate (most recent first)
-      dataCopy.sales.sort((a, b) => {
-        const scoreA = getRelevanceScore(a.Customer, queryText);
-        const scoreB = getRelevanceScore(b.Customer, queryText);
-        if (scoreA !== scoreB) {
-          return scoreB - scoreA;
-        }
-        const da = a.OrderDate ? new Date(a.OrderDate) : new Date(0);
-        const db = b.OrderDate ? new Date(b.OrderDate) : new Date(0);
-        return db - da;
-      });
-    } else if (sortVal === 'date-desc') {
-      dataCopy.sales.sort((a, b) => {
-        const da = a.OrderDate ? new Date(a.OrderDate) : new Date(0);
-        const db = b.OrderDate ? new Date(b.OrderDate) : new Date(0);
-        return db - da;
-      });
-    } else if (sortVal === 'date-asc') {
-      dataCopy.sales.sort((a, b) => {
-        const da = a.OrderDate ? new Date(a.OrderDate) : new Date(0);
-        const db = b.OrderDate ? new Date(b.OrderDate) : new Date(0);
-        return da - db;
-      });
-    } else if (sortVal === 'name-az') {
-      dataCopy.sales.sort((a, b) => (a.Customer || '').localeCompare(b.Customer || ''));
-    } else if (sortVal === 'name-za') {
-      dataCopy.sales.sort((a, b) => (b.Customer || '').localeCompare(a.Customer || ''));
-    }
-  }
-
-  // Sort Products
-  if (dataCopy.products.length > 0) {
-    if (sortVal === 'default') {
-      dataCopy.products.sort((a, b) => {
-        const scoreA = getRelevanceScore(a.Name, queryText);
-        const scoreB = getRelevanceScore(b.Name, queryText);
-        if (scoreA !== scoreB) {
-          return scoreB - scoreA;
-        }
-        return (a.SKU || '').localeCompare(b.SKU || '');
-      });
-    } else if (sortVal === 'name-az') {
-      dataCopy.products.sort((a, b) => (a.Name || '').localeCompare(b.Name || ''));
-    } else if (sortVal === 'name-za') {
-      dataCopy.products.sort((a, b) => (b.Name || '').localeCompare(a.Name || ''));
-    }
-  }
-
-  renderResults(dataCopy);
-}
-
-// Render dynamic results with client-side pagination
-function renderResults(data) {
-  loader.classList.add('hidden');
-
-  // Notify user of any backend partial failures
-  if (data.errors) {
-    const failedApis = [];
-    if (data.errors.sales) failedApis.push('Sales Orders');
-    if (data.errors.products) failedApis.push('Products');
-    if (failedApis.length > 0) {
-      console.warn("Backend API partial failures:", data.errors);
-      showStatusAlert(`Warning: Failed to retrieve data from Cin7`, 'warning');
-    }
-  }
-
-  const { sales, products } = data;
-  
-  // Filter out VOID/VOIDED transactions on the client side for absolute safety
-  const filteredSales = (sales || []).filter(s => {
+  const filteredSales = (currentResults.sales || []).filter(s => {
     const status = (s.Status || '').toUpperCase();
     return status !== 'VOID' && status !== 'VOIDED';
   });
 
-  // Isolate current items pool based on active scope
-  const items = activeScope === 'sales' ? filteredSales : (products || []);
-  const totalItems = items.length;
+  const productsList = currentResults.products || [];
+
+  // Wrap items to identify type
+  const combinedItems = [
+    ...filteredSales.map(s => ({ type: 'sale', data: s })),
+    ...productsList.map(p => ({ type: 'product', data: p }))
+  ];
+
+  // Sorting Handler
+  if (sortVal === 'default') {
+    combinedItems.sort((a, b) => {
+      const nameA = a.type === 'sale' ? (a.data.Customer || '') : (a.data.Name || '');
+      const nameB = b.type === 'sale' ? (b.data.Customer || '') : (b.data.Name || '');
+      const scoreA = getRelevanceScore(nameA, queryText);
+      const scoreB = getRelevanceScore(nameB, queryText);
+      if (scoreA !== scoreB) return scoreB - scoreA;
+
+      // Group Sales first by default
+      if (a.type !== b.type) {
+        return a.type === 'sale' ? -1 : 1;
+      }
+
+      if (a.type === 'sale') {
+        const da = a.data.OrderDate ? new Date(a.data.OrderDate) : new Date(0);
+        const db = b.data.OrderDate ? new Date(b.data.OrderDate) : new Date(0);
+        return db - da;
+      } else {
+        return (a.data.SKU || '').localeCompare(b.data.SKU || '');
+      }
+    });
+  } else if (sortVal === 'date-desc') {
+    combinedItems.sort((a, b) => {
+      const da = a.type === 'sale' ? (a.data.OrderDate ? new Date(a.data.OrderDate) : new Date(0)) : new Date(0);
+      const db = b.type === 'sale' ? (b.data.OrderDate ? new Date(b.data.OrderDate) : new Date(0)) : new Date(0);
+      return db - da;
+    });
+  } else if (sortVal === 'date-asc') {
+    combinedItems.sort((a, b) => {
+      const da = a.type === 'sale' ? (a.data.OrderDate ? new Date(a.data.OrderDate) : new Date(0)) : new Date(0);
+      const db = b.type === 'sale' ? (b.data.OrderDate ? new Date(b.data.OrderDate) : new Date(0)) : new Date(0);
+      return da - db;
+    });
+  } else if (sortVal === 'name-az') {
+    combinedItems.sort((a, b) => {
+      const nameA = a.type === 'sale' ? (a.data.Customer || '') : (a.data.Name || '');
+      const nameB = b.type === 'sale' ? (b.data.Customer || '') : (b.data.Name || '');
+      return nameA.localeCompare(nameB);
+    });
+  } else if (sortVal === 'name-za') {
+    combinedItems.sort((a, b) => {
+      const nameA = a.type === 'sale' ? (a.data.Customer || '') : (a.data.Name || '');
+      const nameB = b.type === 'sale' ? (b.data.Customer || '') : (b.data.Name || '');
+      return nameB.localeCompare(nameA);
+    });
+  }
+
+  return combinedItems;
+}
+
+function applyFilterAndRender() {
+  const combinedItems = getCombinedSortedItems();
+  const totalItems = combinedItems.length;
 
   if (totalItems === 0) {
-    salesSection.classList.add('hidden');
-    productsSection.classList.add('hidden');
-    paginationControls.classList.add('hidden');
-    emptyState.classList.remove('hidden');
+    resetUI();
     return;
   }
 
@@ -462,7 +396,7 @@ function renderResults(data) {
 
   // Extract dynamic slice for the active page view
   const startIndex = (currentPage - 1) * PAGE_SIZE;
-  const pageItems = items.slice(startIndex, startIndex + PAGE_SIZE);
+  const pageItems = combinedItems.slice(startIndex, startIndex + PAGE_SIZE);
 
   // Update Pagination controls
   pageIndicator.textContent = `Page ${currentPage} of ${totalPages}`;
@@ -470,38 +404,137 @@ function renderResults(data) {
   nextPageBtn.disabled = currentPage === totalPages;
   paginationControls.classList.remove('hidden');
 
-  // Set up search triage badge
-  triageType.textContent = activeScope === 'sales' ? 'Sales Orders' : 'Product Availability';
-  searchTriageBadge.classList.remove('hidden');
-
-  // Populate sections
-  if (activeScope === 'sales') {
-    salesCount.textContent = totalItems;
-    salesList.innerHTML = '';
-    pageItems.forEach(sale => {
-      salesList.appendChild(createSaleCard(sale));
-    });
-    salesSection.classList.remove('hidden');
-    productsSection.classList.add('hidden');
-    resultsPanel.appendChild(salesSection);
-  } else {
-    productsCount.textContent = totalItems;
-    productsList.innerHTML = '';
-    pageItems.forEach(product => {
-      productsList.appendChild(createProductRow(product));
-    });
-    productsSection.classList.remove('hidden');
-    salesSection.classList.add('hidden');
-    resultsPanel.appendChild(productsSection);
+  // Update triage priority indicator based on the top match type
+  if (pageItems.length > 0) {
+    triageType.textContent = pageItems[0].type === 'sale' ? 'Customer Sales' : 'Product Inventory';
+    searchTriageBadge.classList.remove('hidden');
   }
+
+  // Populate Unified list container
+  let resultsList = document.getElementById('unified-results-list');
+  if (!resultsList) {
+    resultsList = document.createElement('div');
+    resultsList.id = 'unified-results-list';
+    resultsList.className = 'space-y-3';
+    resultsPanel.appendChild(resultsList);
+  }
+  resultsList.innerHTML = '';
+
+  pageItems.forEach(item => {
+    if (item.type === 'sale') {
+      resultsList.appendChild(createSaleCard(item.data));
+    } else {
+      resultsList.appendChild(createProductCard(item.data));
+    }
+  });
 
   resultsPanel.classList.remove('hidden');
 }
 
-// Generate Sale Card element
+// Generate Product availability Card element (replaces table view for layout unification)
+function createProductCard(product) {
+  const sku = product.SKU || 'N/A';
+  const name = product.Name || 'Unnamed Product';
+  const brand = product.Brand || 'N/A';
+  const onHand = product.OnHand !== undefined ? product.OnHand : 0;
+  const allocated = product.Allocated !== undefined ? product.Allocated : 0;
+  const onOrder = product.OnOrder !== undefined ? product.OnOrder : 0;
+  
+  const currentStock = onHand - allocated;
+  const barcode = product.Barcode || 'N/A';
+  const length = product.Length || 0;
+  const width = product.Width || 0;
+  const height = product.Height || 0;
+  const weight = product.Weight || 0;
+  const dimBlock = `Barcode: ${escapeHTML(barcode)} | Dim: ${length}x${width}x${height} | Wt: ${weight}`;
+
+  const card = document.createElement('div');
+  card.className = 'bg-white border border-slate-200 rounded-lg p-3 shadow-sm hover:border-slate-300 transition-colors flex flex-col text-xs';
+
+  // Format Product Family
+  let familyHtml = '';
+  if (product.Family) {
+    familyHtml = `
+      <div class="mt-1.5 p-1.5 bg-slate-50 border border-slate-100 rounded">
+        <div class="font-bold text-slate-700 text-[8px] uppercase tracking-wider mb-1">Product Family</div>
+        <div class="text-[9px] text-slate-600">
+          <span class="font-medium text-slate-700">Family Name:</span> ${escapeHTML(product.Family.Name || 'N/A')}
+          ${product.Family.SKU ? `<br><span class="font-medium text-slate-700">Family SKU:</span> ${escapeHTML(product.Family.SKU)}` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  // Format BOM components
+  let bomHtml = '';
+  if (product.BOM && Array.isArray(product.BOM) && product.BOM.length > 0) {
+    bomHtml = `
+      <div class="mt-1.5 p-1.5 bg-slate-50 border border-slate-100 rounded">
+        <div class="font-bold text-slate-700 text-[8px] uppercase tracking-wider mb-1">Components (BOM)</div>
+        <ul class="space-y-0.5 list-disc pl-3 text-[9px] text-slate-500">
+          ${product.BOM.map(c => `<li><span class="font-medium text-slate-700">${escapeHTML(c.SKU)}</span> (Qty: ${c.Quantity}${c.Name ? ` - ${escapeHTML(c.Name)}` : ''})</li>`).join('')}
+        </ul>
+      </div>
+    `;
+  }
+
+  card.innerHTML = `
+    <!-- Collapsible Header Summary Row -->
+    <div class="card-header flex justify-between items-center cursor-pointer select-none">
+      <div class="flex-grow pr-2">
+        <h3 class="font-bold text-slate-800 text-[13px] flex items-center space-x-1.5">
+          <span class="text-sky-600">📦 ${escapeHTML(sku)}</span>
+          <span class="text-[10px] text-slate-400 font-normal">| ${escapeHTML(name)}</span>
+        </h3>
+        <p class="text-slate-400 font-medium text-[9px] mt-0.5">Brand: ${escapeHTML(brand)}</p>
+      </div>
+      <div class="flex items-center space-x-2">
+        <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+          Avail: ${currentStock}
+        </span>
+        <span class="toggle-icon text-slate-400 font-bold text-xs">▼</span>
+      </div>
+    </div>
+
+    <!-- Collapsible Details Panel (Hidden by default) -->
+    <div class="card-details hidden space-y-2 pt-2.5 mt-2.5 border-t border-slate-100">
+      <div class="grid grid-cols-2 gap-2 text-[10px]">
+        <div class="bg-slate-50 p-2 rounded border border-slate-100">
+          <span class="text-slate-400 block uppercase tracking-wider text-[8px]">On Hand</span>
+          <strong class="text-slate-800 text-[11px]">${onHand}</strong>
+        </div>
+        <div class="bg-slate-50 p-2 rounded border border-slate-100">
+          <span class="text-slate-400 block uppercase tracking-wider text-[8px]">Allocated</span>
+          <strong class="text-slate-800 text-[11px]">${allocated}</strong>
+        </div>
+      </div>
+      <div class="bg-slate-50 p-2 rounded border border-slate-100 text-[10px] flex justify-between items-center">
+        <span class="text-slate-400 uppercase tracking-wider text-[8px]">On Order</span>
+        <strong class="text-slate-800">${onOrder}</strong>
+      </div>
+      <div class="text-[9px] text-slate-400 font-mono select-all bg-slate-50 p-1.5 rounded border border-slate-100">
+        ${escapeHTML(dimBlock)}
+      </div>
+      ${familyHtml}
+      ${bomHtml}
+    </div>
+  `;
+
+  // Click handler to toggle collapsed details
+  const header = card.querySelector('.card-header');
+  const details = card.querySelector('.card-details');
+  const toggleIcon = card.querySelector('.toggle-icon');
+  header.addEventListener('click', () => {
+    const isHidden = details.classList.toggle('hidden');
+    toggleIcon.textContent = isHidden ? '▼' : '▲';
+  });
+
+  return card;
+}
+
+// Generate Sale Card element (Renders collapsed by default)
 function createSaleCard(sale) {
-  // Extract details (guarantee string values)
-  const saleId = sale.ID || '';
+  const saleId = sale.SaleID || sale.ID || '';
   const orderNumber = sale.OrderNumber || 'Unassigned';
   const status = sale.Status || 'Draft';
   const orderDate = sale.OrderDate || 'N/A';
@@ -513,26 +546,66 @@ function createSaleCard(sale) {
   const email = sale.Email || 'N/A';
   const salesRep = sale.SalesRepresentative || 'N/A';
   const discount = sale.Discount !== undefined ? sale.Discount : 0;
-  const attribute6 = sale.AdditionalAttribute6 || 'N/A';
+  const attribute6 = sale.AreaCode || 'N/A';
   
-  const fulfilmentStatus = sale.FulFilmentStatus || 'N/A';
-  const combinedTracking = sale.CombinedTrackingNumbers || 'N/A';
+  const fulfilmentStatus = sale.Status || 'N/A';
+  const combinedTracking = sale.TrackingNumber || 'N/A';
   const invoiceAmount = sale.InvoiceAmount !== undefined ? sale.InvoiceAmount : 0;
   const shippingNotes = sale.ShippingNotes || 'N/A';
 
   // Invoice accounting fields
   const invoiceDueDate = sale.InvoiceDueDate || 'N/A';
-  const paymentStatus = sale.PaymentStatus || 'UNPAID';
+  const invoiceStatus = sale.InvoiceStatus || 'UNPAID';
 
   const card = document.createElement('div');
   card.className = 'bg-white border border-slate-200 rounded-lg p-3 shadow-sm hover:border-slate-300 transition-colors flex flex-col text-xs';
+
+  // Nest product availability mapping directly alongside the sales cards
+  let linesHtml = '';
+  if (sale.OrderLines && sale.OrderLines.length > 0) {
+    linesHtml = `
+      <div class="border border-slate-100 rounded p-2 space-y-1 text-[10px] bg-white mt-2.5">
+        <div class="font-semibold text-slate-700 pb-0.5 border-b border-slate-100 uppercase tracking-wider text-[8px]">Ordered Items & Availability</div>
+        <div class="divide-y divide-slate-100">
+          ${sale.OrderLines.map(line => {
+            const sku = line.SKU || '';
+            const name = line.Name || '';
+            const quantity = line.Quantity || 0;
+            
+            let availHtml = '<span class="text-slate-400 font-mono">(No local match)</span>';
+            if (currentResults && currentResults.products) {
+              const match = currentResults.products.find(p => (p.SKU || '').toLowerCase() === sku.toLowerCase());
+              if (match) {
+                const stock = (match.OnHand || 0) - (match.Allocated || 0);
+                const orderQty = match.OnOrder || 0;
+                availHtml = `<span class="text-emerald-700 font-bold">Avail: ${stock}</span> <span class="text-slate-300">|</span> <span class="text-slate-600">OnOrder: ${orderQty}</span>`;
+              }
+            }
+
+            return `
+              <div class="py-1 flex justify-between items-start text-[10px]">
+                <div class="pr-2">
+                  <div class="font-bold text-slate-800">${escapeHTML(sku)}</div>
+                  <div class="text-[9px] text-slate-500 truncate max-w-[180px]">${escapeHTML(name)}</div>
+                </div>
+                <div class="text-right flex flex-col items-end shrink-0">
+                  <div class="font-semibold text-slate-700">Qty: ${quantity}</div>
+                  <div class="text-[9px] mt-0.5">${availHtml}</div>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  }
 
   card.innerHTML = `
     <!-- Collapsible Header Summary Row -->
     <div class="card-header flex justify-between items-center cursor-pointer select-none">
       <div class="flex-grow pr-2">
         <h3 class="font-bold text-slate-800 text-[13px] flex items-center space-x-1.5">
-          <span>${escapeHTML(orderNumber)}</span>
+          <span class="text-slate-900">📋 ${escapeHTML(orderNumber)}</span>
           <span class="text-[10px] text-slate-400 font-normal">| ${escapeHTML(customer)}</span>
         </h3>
         <p class="text-slate-400 font-medium text-[9px] mt-0.5">${escapeHTML(orderDate)}</p>
@@ -560,11 +633,11 @@ function createSaleCard(sale) {
         <div class="flex justify-between"><span class="text-slate-500">Area Code:</span> <span class="font-medium text-slate-700">${escapeHTML(attribute6)}</span></div>
       </div>
 
-      <!-- Logistics & Billing Panel (Includes Invoice Status and Due Date) -->
+      <!-- Logistics & Billing Panel -->
       <div class="border border-slate-100 rounded p-2 space-y-1 text-[10px] bg-slate-50/50">
         <div class="font-semibold text-slate-700 pb-0.5 border-b border-slate-100 uppercase tracking-wider text-[8px] flex justify-between items-center">
           <span>Logistics & Billing</span>
-          <span class="font-bold text-[9px]">${paymentStatus === 'PAID' ? '🟩 PAID' : '🟨 UNPAID / PARTIALLY PAID'}</span>
+          <span class="font-bold text-[9px]">${invoiceStatus === 'PAID' ? '🟩 PAID' : '🟨 UNPAID / PARTIALLY PAID'}</span>
         </div>
         <div class="flex justify-between"><span class="text-slate-500">Invoice Due Date:</span> <span class="font-semibold text-slate-700">${escapeHTML(invoiceDueDate)}</span></div>
         <div class="flex justify-between"><span class="text-slate-500">Fulfillment Status:</span> <span class="font-semibold text-slate-700">${escapeHTML(fulfilmentStatus)}</span></div>
@@ -572,6 +645,9 @@ function createSaleCard(sale) {
         <div class="flex justify-between"><span class="text-slate-500">Invoice Amount:</span> <span class="font-bold text-slate-800">$${invoiceAmount.toFixed(2)}</span></div>
         <div class="pt-1 border-t border-slate-100 mt-1"><span class="text-slate-500 block pb-0.5">Shipping Notes:</span> <span class="text-slate-600 block italic leading-normal">${escapeHTML(shippingNotes)}</span></div>
       </div>
+
+      <!-- Embedded Order Lines & availability details -->
+      ${linesHtml}
 
       <div class="grid grid-cols-2 gap-2 pt-1">
         <button class="download-btn sales-order shadow-sm bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded py-1 px-2 font-medium tracking-wide flex items-center justify-center space-x-1 transition-colors" data-id="${escapeHTML(saleId)}" data-type="Sale Order">
@@ -630,102 +706,6 @@ function createSaleCard(sale) {
   return card;
 }
 
-// Generate Product Row element
-function createProductRow(product) {
-  const fragment = document.createDocumentFragment();
-
-  const mainRow = document.createElement('tr');
-  mainRow.className = 'border-t border-slate-200 hover:bg-slate-50 transition-colors font-medium text-slate-800 cursor-pointer select-none';
-
-  const sku = product.SKU || 'N/A';
-  const name = product.Name || 'Unnamed Product';
-  const brand = product.Brand || 'N/A';
-  
-  const onHand = product.OnHand !== undefined ? product.OnHand : 0;
-  const allocated = product.Allocated !== undefined ? product.Allocated : 0;
-  const onOrder = product.OnOrder !== undefined ? product.OnOrder : 0;
-  
-  // Calculate Stock levels (OnHand - Allocated)
-  const currentStock = onHand - allocated;
-
-  mainRow.innerHTML = `
-    <td class="px-2.5 py-2 font-semibold text-slate-800 tracking-tight">${escapeHTML(sku)}</td>
-    <td class="px-2.5 py-2 text-slate-600 truncate max-w-[120px]" title="${escapeHTML(name)}">${escapeHTML(name)}</td>
-    <td class="px-2.5 py-2 text-slate-500 flex justify-between items-center">
-      <span>${escapeHTML(brand)}</span>
-      <span class="toggle-icon text-slate-400 font-mono text-[9px] ml-1">▼</span>
-    </td>
-  `;
-  fragment.appendChild(mainRow);
-
-  const detailRow = document.createElement('tr');
-  detailRow.className = 'bg-slate-50/50 border-b border-slate-100 text-[10px] text-slate-600';
-
-  // Format dimensions and weights
-  const barcode = product.Barcode || 'N/A';
-  const length = product.Length || 0;
-  const width = product.Width || 0;
-  const height = product.Height || 0;
-  const weight = product.Weight || 0;
-  const dimBlock = `Barcode: ${escapeHTML(barcode)} | Dim: ${length}x${width}x${height} | Wt: ${weight}`;
-
-  // Format Product Family details if present
-  let familyHtml = '';
-  if (product.Family) {
-    familyHtml = `
-      <div class="mt-1.5 p-1.5 bg-white border border-slate-100 rounded">
-        <div class="font-bold text-slate-700 text-[8px] uppercase tracking-wider mb-1">Product Family</div>
-        <div class="text-[9px] text-slate-600">
-          <span class="font-medium text-slate-700">Family Name:</span> ${escapeHTML(product.Family.Name || 'N/A')}
-          ${product.Family.SKU ? `<br><span class="font-medium text-slate-700">Family SKU:</span> ${escapeHTML(product.Family.SKU)}` : ''}
-        </div>
-      </div>
-    `;
-  }
-
-  // Format BOM components (graceful fallback if BOM is missing)
-  let bomHtml = '';
-  if (product.BOM && Array.isArray(product.BOM) && product.BOM.length > 0) {
-    bomHtml = `
-      <div class="mt-1.5 p-1.5 bg-white border border-slate-100 rounded">
-        <div class="font-bold text-slate-700 text-[8px] uppercase tracking-wider mb-1">Components (BOM)</div>
-        <ul class="space-y-0.5 list-disc pl-3 text-[9px] text-slate-500">
-          ${product.BOM.map(c => `<li><span class="font-medium text-slate-700">${escapeHTML(c.SKU)}</span> (Qty: ${c.Quantity}${c.Name ? ` - ${escapeHTML(c.Name)}` : ''})</li>`).join('')}
-        </ul>
-      </div>
-    `;
-  }
-
-  detailRow.innerHTML = `
-    <td colspan="3" class="px-2.5 pb-2.5 pt-0.5">
-      <!-- Collapsible Details Panel (Hidden by default) -->
-      <div class="card-details hidden flex flex-col space-y-1">
-        <div class="flex items-center space-x-3 text-[10px]">
-          <span class="font-medium">Current Stock: <strong class="text-sky-700 font-bold">${currentStock}</strong></span>
-          <span class="text-slate-300">|</span>
-          <span class="font-medium">On Order: <strong class="text-slate-700">${onOrder}</strong></span>
-        </div>
-        <div class="text-[9px] text-slate-400 select-all font-mono leading-none pt-0.5">
-          ${escapeHTML(dimBlock)}
-        </div>
-        ${familyHtml}
-        ${bomHtml}
-      </div>
-    </td>
-  `;
-  fragment.appendChild(detailRow);
-
-  // Click handler to toggle collapsed details
-  const detailsContainer = detailRow.querySelector('.card-details');
-  const toggleIcon = mainRow.querySelector('.toggle-icon');
-  mainRow.addEventListener('click', () => {
-    const isHidden = detailsContainer.classList.toggle('hidden');
-    toggleIcon.textContent = isHidden ? '▼' : '▲';
-  });
-
-  return fragment;
-}
-
 // Download PDF blob from Backend
 async function downloadDocument(button, saleId, type) {
   if (!saleId) {
@@ -755,18 +735,15 @@ async function downloadDocument(button, saleId, type) {
     const blob = await response.blob();
     const blobUrl = window.URL.createObjectURL(blob);
     
-    // Trigger browser file download
     const link = document.createElement('a');
     link.href = blobUrl;
     link.download = `${type.replace(/\s+/g, '_')}_${saleId}.pdf`;
     document.body.appendChild(link);
     link.click();
     
-    // Clean up
     document.body.removeChild(link);
     window.URL.revokeObjectURL(blobUrl);
 
-    // Show Success state on button
     button.innerHTML = '<span>✅ Ready</span>';
     setTimeout(() => {
       button.disabled = false;
@@ -812,7 +789,7 @@ function showStatusAlert(msg, level) {
   }, 2200);
 }
 
-// Helper to escape HTML special characters to prevent attribute and script injection issues
+// Helper to escape HTML special characters
 function escapeHTML(str) {
   if (typeof str !== 'string') return '';
   return str
