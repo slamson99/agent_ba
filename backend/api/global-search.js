@@ -51,13 +51,156 @@ module.exports = async function (req, res) {
     let sales = [];
     let priority = 'products';
 
+    // 1. Fetch detailed product catalog information if there are any results
     if (productsRes.status === 'fulfilled' && productsRes.value.ok) {
       const data = await productsRes.value.json();
-      products = data.ProductAvailabilityList || [];
+      const rawProducts = data.ProductAvailabilityList || [];
+      
+      // Limit to top 5 detailed fetches to prevent rate limiting
+      const detailedProductsPromises = rawProducts.slice(0, 5).map(async (prod) => {
+        try {
+          const detailRes = await httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/Product?ID=${prod.ID}`, headers);
+          if (detailRes.ok) {
+            const productDetails = await detailRes.json();
+            
+            // Extract BOM Components if present
+            let bomComponents = [];
+            const bom = productDetails.BOM || productDetails.BillOfMaterials || {};
+            const lines = bom.Lines || bom.Components || bom.LinesList || [];
+            if (Array.isArray(lines)) {
+              bomComponents = lines.map(line => ({
+                SKU: line.ComponentSKU || line.SKU || line.ProductSKU || '',
+                Quantity: line.Quantity || line.Qty || 0
+              })).filter(comp => comp.SKU);
+            }
+
+            return {
+              ID: prod.ID || productDetails.ID || '',
+              SKU: prod.SKU || productDetails.SKU || 'N/A',
+              Name: prod.Name || productDetails.Name || 'Unnamed Product',
+              Brand: productDetails.Brand || 'N/A',
+              OnHand: prod.OnHand !== undefined ? prod.OnHand : 0,
+              Allocated: prod.Allocated !== undefined ? prod.Allocated : 0,
+              OnOrder: prod.OnOrder !== undefined ? prod.OnOrder : 0,
+              Barcode: productDetails.Barcode || 'N/A',
+              Length: productDetails.Length !== undefined ? productDetails.Length : 0,
+              Width: productDetails.Width !== undefined ? productDetails.Width : 0,
+              Height: productDetails.Height !== undefined ? productDetails.Height : 0,
+              Weight: productDetails.Weight !== undefined ? productDetails.Weight : 0,
+              BOM: bomComponents.length > 0 ? bomComponents : null
+            };
+          }
+        } catch (err) {
+          console.error(`Failed to fetch product details for ${prod.ID}:`, err);
+        }
+        
+        // Fallback to basic availability data if detailed fetch fails
+        return {
+          ID: prod.ID,
+          SKU: prod.SKU || 'N/A',
+          Name: prod.Name || 'Unnamed Product',
+          Brand: 'N/A',
+          OnHand: prod.OnHand !== undefined ? prod.OnHand : 0,
+          Allocated: prod.Allocated !== undefined ? prod.Allocated : 0,
+          OnOrder: prod.OnOrder !== undefined ? prod.OnOrder : 0,
+          Barcode: 'N/A',
+          Length: 0,
+          Width: 0,
+          Height: 0,
+          Weight: 0,
+          BOM: null
+        };
+      });
+      
+      products = await Promise.all(detailedProductsPromises);
     }
+
+    // 2. Fetch detailed sales information if there are any search results
     if (salesRes.status === 'fulfilled' && salesRes.value.ok) {
       const data = await salesRes.value.json();
-      sales = data.SaleList || [];
+      const rawSales = data.SaleList || [];
+      
+      // Limit to top 5 detailed fetches to ensure performance and prevent rate limiting
+      const detailedSalesPromises = rawSales.slice(0, 5).map(async (sale) => {
+        try {
+          const detailRes = await httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/Sale?ID=${sale.ID}`, headers);
+          if (detailRes.ok) {
+            const saleDetails = await detailRes.json();
+            
+            // Extract tracking & shipping details
+            let trackingNumbers = [];
+            let shippingNotesList = [];
+            const fulfillments = saleDetails.Fulfillments || saleDetails.Fulfillment || [];
+            if (Array.isArray(fulfillments)) {
+              fulfillments.forEach(f => {
+                const ship = f.Ship || f.Shipment || {};
+                if (ship.Lines && Array.isArray(ship.Lines)) {
+                  ship.Lines.forEach(l => {
+                    if (l.TrackingNumber) trackingNumbers.push(l.TrackingNumber);
+                  });
+                }
+                if (ship.TrackingNumber) {
+                  trackingNumbers.push(ship.TrackingNumber);
+                }
+                if (ship.Notes || ship.ShippingNotes || ship.Comment) {
+                  shippingNotesList.push(ship.Notes || ship.ShippingNotes || ship.Comment);
+                }
+              });
+            }
+
+            // Extract invoice details
+            const invoices = saleDetails.Invoices || saleDetails.Invoice || [];
+            let invoiceNumber = 'N/A';
+            let invoiceAmount = 0;
+            if (Array.isArray(invoices) && invoices.length > 0) {
+              invoiceNumber = invoices[0].InvoiceNumber || 'N/A';
+              invoiceAmount = invoices[0].Total || invoices[0].InvoiceTotal || 0;
+            } else if (invoices && typeof invoices === 'object') {
+              invoiceNumber = invoices.InvoiceNumber || 'N/A';
+              invoiceAmount = invoices.Total || invoices.InvoiceTotal || 0;
+            }
+
+            return {
+              ID: sale.ID || saleDetails.ID || '',
+              OrderNumber: sale.OrderNumber || saleDetails.OrderNumber || 'Unassigned',
+              Status: saleDetails.Status || sale.Status || 'Draft',
+              Customer: saleDetails.Customer || sale.Customer || 'Unknown Customer',
+              Email: saleDetails.Email || saleDetails.ContactEmail || 'N/A',
+              SalesRepresentative: saleDetails.SalesRepresentative || saleDetails.SalesPerson || 'N/A',
+              Discount: saleDetails.Discount || saleDetails.DiscountPercent || 0,
+              AdditionalAttribute6: saleDetails.AdditionalAttribute6 || 'N/A',
+              InvoiceNumber: invoiceNumber,
+              CustomerReference: saleDetails.CustomerReference || saleDetails.Reference || 'N/A',
+              InvoiceAmount: invoiceAmount,
+              FulFilmentStatus: saleDetails.FulfillmentStatus || saleDetails.Status || 'N/A',
+              CombinedTrackingNumbers: trackingNumbers.filter((v, i, a) => a.indexOf(v) === i).join(', ') || 'N/A',
+              ShippingNotes: shippingNotesList.filter((v, i, a) => a.indexOf(v) === i && v).join('; ') || 'N/A'
+            };
+          }
+        } catch (err) {
+          console.error(`Failed to fetch sale details for ${sale.ID}:`, err);
+        }
+        
+        // Fallback to basic list data if detailed fetch fails
+        return {
+          ID: sale.ID,
+          OrderNumber: sale.OrderNumber || 'Unassigned',
+          Status: sale.Status || 'Draft',
+          Customer: sale.Customer || 'Unknown Customer',
+          Email: 'N/A',
+          SalesRepresentative: 'N/A',
+          Discount: 0,
+          AdditionalAttribute6: 'N/A',
+          InvoiceNumber: 'N/A',
+          CustomerReference: 'N/A',
+          InvoiceAmount: 0,
+          FulFilmentStatus: sale.Status || 'N/A',
+          CombinedTrackingNumbers: 'N/A',
+          ShippingNotes: 'N/A'
+        };
+      });
+      
+      sales = await Promise.all(detailedSalesPromises);
     }
 
     if (query.toUpperCase().startsWith('SO-') || /^\d+$/.test(query)) {
