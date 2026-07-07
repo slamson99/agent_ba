@@ -14,7 +14,13 @@ module.exports = async function (req, res) {
     'api-auth-applicationkey': process.env.CIN7_API_KEY || process.env.CIN7_APPLICATION_KEY
   };
 
-  const documentUrl = `https://inventory.dearsystems.com/ExternalApi/v2/Document?SaleID=${saleId}&Type=${encodeURIComponent(documentType)}`;
+  // Adjust URL matching for Invoice type template syncing
+  let documentUrl;
+  if (documentType === 'Invoice' || documentType === 'invoice') {
+    documentUrl = `https://inventory.dearsystems.com/ExternalApi/v2/Document?SaleID=${saleId}&Type=Invoice&TemplateName=BA+Invoice`;
+  } else {
+    documentUrl = `https://inventory.dearsystems.com/ExternalApi/v2/Document?SaleID=${saleId}&Type=${encodeURIComponent(documentType)}`;
+  }
 
   try {
     https.get(documentUrl, { headers }, (response) => {

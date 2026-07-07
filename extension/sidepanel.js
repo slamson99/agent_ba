@@ -15,17 +15,32 @@ const productsCount = document.getElementById('products-count');
 const searchTriageBadge = document.getElementById('search-triage-badge');
 const triageType = document.getElementById('triage-type');
 
+// Tab DOM Elements
+const tabSales = document.getElementById('tab-sales');
+const tabProducts = document.getElementById('tab-products');
+
+// Pagination DOM Elements
+const paginationControls = document.getElementById('pagination-controls');
+const prevPageBtn = document.getElementById('prev-page-btn');
+const nextPageBtn = document.getElementById('next-page-btn');
+const pageIndicator = document.getElementById('page-indicator');
+
 // Settings DOM Elements
 const toggleSettingsBtn = document.getElementById('toggle-settings-btn');
 const settingsPanel = document.getElementById('settings-panel');
 const backendUrlInput = document.getElementById('backend-url');
 const saveSettingsBtn = document.getElementById('save-settings-btn');
 
-// Constants & Filtering State
+// Constants & Overhauled Filtering/Pagination State
 const DEFAULT_BACKEND_URL = 'https://agent-ba.vercel.app';
 let backendUrl = DEFAULT_BACKEND_URL;
 let searchDebounceTimeout = null;
-let currentResults = null;
+
+let activeScope = 'sales'; // Default active tab scope
+let currentResults = null; // Full dataset cached in memory
+const PAGE_SIZE = 10;      // Enforce limit of 10 items per page
+let currentPage = 1;
+
 const filterSortSelect = document.getElementById('filter-sort');
 
 // Initialize Settings
@@ -42,6 +57,57 @@ document.addEventListener('DOMContentLoaded', () => {
     backendUrlInput.value = backendUrl;
   }
 });
+
+// Tab Switch Click Handlers
+if (tabSales) {
+  tabSales.addEventListener('click', () => selectTab('sales'));
+}
+if (tabProducts) {
+  tabProducts.addEventListener('click', () => selectTab('products'));
+}
+
+function selectTab(scope) {
+  if (activeScope === scope) return;
+  activeScope = scope;
+  currentPage = 1;
+
+  // Instantly toggle active tab visual classes
+  if (activeScope === 'sales') {
+    tabSales.className = "flex-1 py-2.5 text-center border-b-2 border-slate-800 bg-white text-slate-800 focus:outline-none";
+    tabProducts.className = "flex-1 py-2.5 text-center border-b-2 border-transparent text-slate-500 hover:text-slate-800 focus:outline-none";
+  } else {
+    tabProducts.className = "flex-1 py-2.5 text-center border-b-2 border-slate-800 bg-white text-slate-800 focus:outline-none";
+    tabSales.className = "flex-1 py-2.5 text-center border-b-2 border-transparent text-slate-500 hover:text-slate-800 focus:outline-none";
+  }
+
+  // Refresh results with scope context
+  const query = searchInput.value.trim();
+  if (query.length > 0) {
+    executeSearch(query);
+  } else {
+    resetUI();
+  }
+}
+
+// Pagination Controls Handlers
+if (prevPageBtn) {
+  prevPageBtn.addEventListener('click', () => {
+    if (currentPage > 1) {
+      currentPage--;
+      applyFilterAndRender();
+    }
+  });
+}
+if (nextPageBtn) {
+  nextPageBtn.addEventListener('click', () => {
+    const items = activeScope === 'sales' ? (currentResults.sales || []) : (currentResults.products || []);
+    const totalPages = Math.ceil(items.length / PAGE_SIZE) || 1;
+    if (currentPage < totalPages) {
+      currentPage++;
+      applyFilterAndRender();
+    }
+  });
+}
 
 // Toggle Settings Panel
 toggleSettingsBtn.addEventListener('click', () => {
@@ -113,8 +179,10 @@ function resetUI() {
   salesSection.classList.add('hidden');
   productsSection.classList.add('hidden');
   searchTriageBadge.classList.add('hidden');
+  paginationControls.classList.add('hidden');
   emptyState.classList.remove('hidden');
   currentResults = null;
+  currentPage = 1;
 }
 
 // Perform API global search call
@@ -127,9 +195,12 @@ async function executeSearch(query) {
   emptyState.classList.add('hidden');
   resultsPanel.classList.add('hidden');
   searchTriageBadge.classList.add('hidden');
+  paginationControls.classList.add('hidden');
 
   const sanitizedUrl = backendUrl.replace(/\/$/, '');
-  const searchUrl = `${sanitizedUrl}/api/global-search?query=${encodeURIComponent(query)}`;
+  
+  // Optimize execution pipeline: pass activeScope so backend ignores other checks entirely
+  const searchUrl = `${sanitizedUrl}/api/global-search?query=${encodeURIComponent(query)}&scope=${activeScope}`;
 
   try {
     const response = await fetch(searchUrl);
@@ -159,12 +230,24 @@ async function executeSearch(query) {
 if (filterSortSelect) {
   filterSortSelect.addEventListener('change', () => {
     if (!currentResults) return;
+    currentPage = 1; // Reset to page 1 on filter change
     applyFilterAndRender();
   });
 }
 
+function getRelevanceScore(name, query) {
+  if (!name || !query) return 0;
+  const normName = name.toLowerCase();
+  const normQuery = query.toLowerCase();
+  if (normName === normQuery) return 3; // Exact match
+  if (normName.startsWith(normQuery)) return 2; // Prefix match
+  if (normName.includes(normQuery)) return 1; // Substring match
+  return 0;
+}
+
 function applyFilterAndRender() {
   const sortVal = filterSortSelect ? filterSortSelect.value : 'default';
+  const queryText = searchInput.value.trim();
   
   // Clone results to avoid mutating original state
   const dataCopy = {
@@ -173,9 +256,21 @@ function applyFilterAndRender() {
     products: currentResults.products ? [...currentResults.products] : []
   };
 
-  // Sort Sales by Date or Name
+  // Sort Sales
   if (dataCopy.sales.length > 0) {
-    if (sortVal === 'date-desc') {
+    if (sortVal === 'default') {
+      // Smart sorting: Relevance first (exact/prefix top), fall back to OrderDate (most recent first)
+      dataCopy.sales.sort((a, b) => {
+        const scoreA = getRelevanceScore(a.Customer, queryText);
+        const scoreB = getRelevanceScore(b.Customer, queryText);
+        if (scoreA !== scoreB) {
+          return scoreB - scoreA;
+        }
+        const da = a.OrderDate ? new Date(a.OrderDate) : new Date(0);
+        const db = b.OrderDate ? new Date(b.OrderDate) : new Date(0);
+        return db - da;
+      });
+    } else if (sortVal === 'date-desc') {
       dataCopy.sales.sort((a, b) => {
         const da = a.OrderDate ? new Date(a.OrderDate) : new Date(0);
         const db = b.OrderDate ? new Date(b.OrderDate) : new Date(0);
@@ -194,9 +289,18 @@ function applyFilterAndRender() {
     }
   }
 
-  // Sort Products by Name
+  // Sort Products
   if (dataCopy.products.length > 0) {
-    if (sortVal === 'name-az') {
+    if (sortVal === 'default') {
+      dataCopy.products.sort((a, b) => {
+        const scoreA = getRelevanceScore(a.Name, queryText);
+        const scoreB = getRelevanceScore(b.Name, queryText);
+        if (scoreA !== scoreB) {
+          return scoreB - scoreA;
+        }
+        return (a.SKU || '').localeCompare(b.SKU || '');
+      });
+    } else if (sortVal === 'name-az') {
       dataCopy.products.sort((a, b) => (a.Name || '').localeCompare(b.Name || ''));
     } else if (sortVal === 'name-za') {
       dataCopy.products.sort((a, b) => (b.Name || '').localeCompare(a.Name || ''));
@@ -206,7 +310,7 @@ function applyFilterAndRender() {
   renderResults(dataCopy);
 }
 
-// Render dynamic results
+// Render dynamic results with client-side pagination
 function renderResults(data) {
   loader.classList.add('hidden');
 
@@ -215,57 +319,66 @@ function renderResults(data) {
     const failedApis = [];
     if (data.errors.sales) failedApis.push('Sales Orders');
     if (data.errors.products) failedApis.push('Products');
-    if (data.errors.customers) failedApis.push('Customers');
     if (failedApis.length > 0) {
       console.warn("Backend API partial failures:", data.errors);
-      showStatusAlert(`Warning: Failed to retrieve ${failedApis.join(', ')} from Cin7`, 'warning');
+      showStatusAlert(`Warning: Failed to retrieve data from Cin7`, 'warning');
     }
   }
 
-  const { sales, products, priority } = data;
-  const hasSales = sales && sales.length > 0;
-  const hasProducts = products && products.length > 0;
+  const { sales, products } = data;
+  
+  // Isolate current items pool based on active scope
+  const items = activeScope === 'sales' ? (sales || []) : (products || []);
+  const totalItems = items.length;
 
-  if (!hasSales && !hasProducts) {
+  if (totalItems === 0) {
+    salesSection.classList.add('hidden');
+    productsSection.classList.add('hidden');
+    paginationControls.classList.add('hidden');
     emptyState.classList.remove('hidden');
     return;
   }
 
+  emptyState.classList.add('hidden');
+
+  // Compute pagination parameters
+  const totalPages = Math.ceil(totalItems / PAGE_SIZE) || 1;
+  if (currentPage > totalPages) currentPage = totalPages;
+  if (currentPage < 1) currentPage = 1;
+
+  // Extract dynamic slice for the active page view
+  const startIndex = (currentPage - 1) * PAGE_SIZE;
+  const pageItems = items.slice(startIndex, startIndex + PAGE_SIZE);
+
+  // Update Pagination controls
+  pageIndicator.textContent = `Page ${currentPage} of ${totalPages}`;
+  prevPageBtn.disabled = currentPage === 1;
+  nextPageBtn.disabled = currentPage === totalPages;
+  paginationControls.classList.remove('hidden');
+
   // Set up search triage badge
-  triageType.textContent = priority === 'sales' ? 'Sales Orders' : 'Product Availability';
+  triageType.textContent = activeScope === 'sales' ? 'Sales Orders' : 'Product Availability';
   searchTriageBadge.classList.remove('hidden');
 
-  // Reorder sections in the DOM based on priority heuristic
-  if (priority === 'sales') {
-    resultsPanel.appendChild(salesSection);
-    resultsPanel.appendChild(productsSection);
-  } else {
-    resultsPanel.appendChild(productsSection);
-    resultsPanel.appendChild(salesSection);
-  }
-
-  // Populate Sales section
-  if (hasSales) {
-    salesCount.textContent = sales.length;
+  // Populate sections
+  if (activeScope === 'sales') {
+    salesCount.textContent = totalItems;
     salesList.innerHTML = '';
-    sales.forEach(sale => {
+    pageItems.forEach(sale => {
       salesList.appendChild(createSaleCard(sale));
     });
     salesSection.classList.remove('hidden');
+    productsSection.classList.add('hidden');
+    resultsPanel.appendChild(salesSection);
   } else {
-    salesSection.classList.add('hidden');
-  }
-
-  // Populate Products section
-  if (hasProducts) {
-    productsCount.textContent = products.length;
+    productsCount.textContent = totalItems;
     productsList.innerHTML = '';
-    products.forEach(product => {
+    pageItems.forEach(product => {
       productsList.appendChild(createProductRow(product));
     });
     productsSection.classList.remove('hidden');
-  } else {
-    productsSection.classList.add('hidden');
+    salesSection.classList.add('hidden');
+    resultsPanel.appendChild(productsSection);
   }
 
   resultsPanel.classList.remove('hidden');
@@ -326,7 +439,7 @@ function createSaleCard(sale) {
         <div class="flex justify-between"><span class="text-slate-500">Email:</span> <span class="font-medium text-slate-700">${escapeHTML(email)}</span></div>
         <div class="flex justify-between"><span class="text-slate-500">Sales Rep:</span> <span class="font-medium text-slate-700">${escapeHTML(salesRep)}</span></div>
         <div class="flex justify-between"><span class="text-slate-500">Discount %:</span> <span class="font-medium text-slate-700">${discount}%</span></div>
-        <div class="flex justify-between"><span class="text-slate-500">Attrib 6:</span> <span class="font-medium text-slate-700">${escapeHTML(attribute6)}</span></div>
+        <div class="flex justify-between"><span class="text-slate-500">Area Code:</span> <span class="font-medium text-slate-700">${escapeHTML(attribute6)}</span></div>
       </div>
 
       <div class="border border-slate-100 rounded p-2 space-y-1 text-[10px] bg-slate-50/50">

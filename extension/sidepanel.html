@@ -66,6 +66,12 @@
   <!-- Main Content Container -->
   <main class="flex-grow p-4 flex flex-col space-y-4 max-w-md mx-auto w-full">
     
+    <!-- Scope Buttons (Tabs) -->
+    <div class="flex border-b border-slate-200 text-xs font-semibold bg-slate-50 rounded-t-lg overflow-hidden">
+      <button id="tab-sales" class="flex-1 py-2.5 text-center border-b-2 border-slate-800 bg-white text-slate-800 focus:outline-none">📋 Customer Sales</button>
+      <button id="tab-products" class="flex-1 py-2.5 text-center border-b-2 border-transparent text-slate-500 hover:text-slate-800 focus:outline-none">📦 Products</button>
+    </div>
+
     <!-- Search Box -->
     <div class="relative">
       <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -179,6 +185,13 @@
         </div>
       </section>
 
+    </div>
+
+    <!-- Pagination Control Footer -->
+    <div id="pagination-controls" class="hidden border-t border-slate-200 p-2 flex items-center justify-between bg-slate-50 text-xs rounded-b-lg shadow-sm">
+      <button id="prev-page-btn" class="px-2 py-1 bg-white border border-slate-300 rounded text-slate-700 disabled:opacity-40 font-medium">◀ Previous</button>
+      <span id="page-indicator" class="text-slate-500 font-medium">Page 1 of 1</span>
+      <button id="next-page-btn" class="px-2 py-1 bg-white border border-slate-300 rounded text-slate-700 disabled:opacity-40 font-medium">Next ▶</button>
     </div>
 
   </main>

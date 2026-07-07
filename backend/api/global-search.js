@@ -42,7 +42,7 @@ module.exports = async function (req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const { query } = req.query;
+  const { query, scope } = req.query;
   if (!query) return res.status(400).json({ error: "Missing query parameter" });
 
   const headers = {
@@ -52,10 +52,17 @@ module.exports = async function (req, res) {
   };
 
   try {
-    // Query exact paths derived from official Cin7 documentation using native client
+    // Smart Pipeline: Skip unnecessary list queries depending on the requested scope
+    const queryProducts = !scope || scope === 'products';
+    const querySales = !scope || scope === 'sales';
+
     const [productsRes, salesRes] = await Promise.allSettled([
-      httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/ProductAvailability?Search=${encodeURIComponent(query)}`, headers),
-      httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(query)}`, headers)
+      queryProducts 
+        ? httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/ProductAvailability?Search=${encodeURIComponent(query)}`, headers)
+        : Promise.resolve({ ok: true, json: async () => ({ ProductAvailabilityList: [] }) }),
+      querySales
+        ? httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(query)}`, headers)
+        : Promise.resolve({ ok: true, json: async () => ({ SaleList: [] }) })
     ]);
 
     let products = [];
@@ -63,7 +70,7 @@ module.exports = async function (req, res) {
     let priority = 'products';
 
     // 1. Fetch detailed product catalog information if there are any results
-    if (productsRes.status === 'fulfilled' && productsRes.value.ok) {
+    if (queryProducts && productsRes.status === 'fulfilled' && productsRes.value.ok) {
       const data = await productsRes.value.json();
       const rawProducts = data.ProductAvailabilityList || [];
       
@@ -131,7 +138,7 @@ module.exports = async function (req, res) {
     }
 
     // 2. Fetch detailed sales information if there are any search results
-    if (salesRes.status === 'fulfilled' && salesRes.value.ok) {
+    if (querySales && salesRes.status === 'fulfilled' && salesRes.value.ok) {
       const data = await salesRes.value.json();
       const rawSales = data.SaleList || [];
       
@@ -139,13 +146,21 @@ module.exports = async function (req, res) {
       const detailedSalesPromises = rawSales.slice(0, 5).map(async (sale) => {
         try {
           const saleId = sale.SaleID || sale.ID || '';
-          const detailRes = await httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/Sale?ID=${saleId}`, headers);
-          if (detailRes.ok) {
-            const saleDetails = await detailRes.json();
+          
+          // Concurrently fetch Sale Details AND Fulfilment Payload to resolve tracking details
+          const [detailRes, fulfilmentRes] = await Promise.allSettled([
+            httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/Sale?ID=${saleId}`, headers),
+            httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/Sale/Fulfilment?TaskID=${saleId}`, headers)
+          ]);
+          
+          if (detailRes.status === 'fulfilled' && detailRes.value.ok) {
+            const saleDetails = await detailRes.value.json();
             
-            // Extract tracking & shipping details
+            // Extract tracking & shipping details from both payloads
             let trackingNumbers = [];
             let shippingNotesList = [];
+            
+            // Traversal 1: Details payload
             const fulfillments = saleDetails.Fulfillments || saleDetails.Fulfillment || [];
             if (Array.isArray(fulfillments)) {
               fulfillments.forEach(f => {
@@ -164,6 +179,32 @@ module.exports = async function (req, res) {
               });
             }
 
+            // Traversal 2: Hydrated Fulfilment payload
+            if (fulfilmentRes.status === 'fulfilled' && fulfilmentRes.value.ok) {
+              try {
+                const fData = await fulfilmentRes.value.json();
+                const fList = fData.Fulfillments || fData.Fulfillment || fData.FulfillmentsList || [];
+                if (Array.isArray(fList)) {
+                  fList.forEach(f => {
+                    const ship = f.Ship || f.Shipment || {};
+                    if (ship.Lines && Array.isArray(ship.Lines)) {
+                      ship.Lines.forEach(l => {
+                        if (l.TrackingNumber) trackingNumbers.push(l.TrackingNumber);
+                      });
+                    }
+                    if (ship.TrackingNumber) {
+                      trackingNumbers.push(ship.TrackingNumber);
+                    }
+                    if (ship.Notes || ship.ShippingNotes || ship.Comment || ship.ConnectionNotes) {
+                      shippingNotesList.push(ship.Notes || ship.ShippingNotes || ship.Comment || ship.ConnectionNotes);
+                    }
+                  });
+                }
+              } catch (e) {
+                console.error("Failed to parse hydrated Sale/Fulfilment details:", e);
+              }
+            }
+
             // Extract invoice details
             const invoices = saleDetails.Invoices || saleDetails.Invoice || [];
             let invoiceNumber = 'N/A';
@@ -176,6 +217,9 @@ module.exports = async function (req, res) {
               invoiceAmount = invoices.Total || invoices.InvoiceTotal || 0;
             }
 
+            // Mirror AdditionalAttribute6 from root Sale layout
+            const additionalAttribute6 = saleDetails.AdditionalAttribute6 || (saleDetails.AdditionalAttributes && saleDetails.AdditionalAttributes.AdditionalAttribute6) || 'N/A';
+
             return {
               ID: saleId || saleDetails.ID || '',
               OrderNumber: sale.OrderNumber || saleDetails.OrderNumber || 'Unassigned',
@@ -185,12 +229,12 @@ module.exports = async function (req, res) {
               Email: saleDetails.Email || saleDetails.ContactEmail || 'N/A',
               SalesRepresentative: saleDetails.SalesRepresentative || saleDetails.SalesPerson || 'N/A',
               Discount: saleDetails.Discount || saleDetails.DiscountPercent || 0,
-              AdditionalAttribute6: saleDetails.AdditionalAttribute6 || 'N/A',
+              AdditionalAttribute6: additionalAttribute6,
               InvoiceNumber: invoiceNumber,
               CustomerReference: saleDetails.CustomerReference || saleDetails.Reference || 'N/A',
               InvoiceAmount: invoiceAmount,
               FulFilmentStatus: saleDetails.FulfillmentStatus || saleDetails.Status || 'N/A',
-              CombinedTrackingNumbers: trackingNumbers.filter((v, i, a) => a.indexOf(v) === i).join(', ') || 'N/A',
+              CombinedTrackingNumbers: trackingNumbers.filter((v, i, a) => a.indexOf(v) === i && v).join(', ') || 'N/A',
               ShippingNotes: shippingNotesList.filter((v, i, a) => a.indexOf(v) === i && v).join('; ') || 'N/A'
             };
           }
@@ -221,7 +265,15 @@ module.exports = async function (req, res) {
       sales = await Promise.all(detailedSalesPromises);
     }
 
-    if (query.toUpperCase().startsWith('SO-') || /^\d+$/.test(query)) {
+    // Voided Filtering Block: Strip out any transactions where Status is Void/Voided
+    sales = sales.filter(s => {
+      const status = (s.Status || '').toUpperCase();
+      return status !== 'VOID' && status !== 'VOIDED';
+    });
+
+    if (scope) {
+      priority = scope;
+    } else if (query.toUpperCase().startsWith('SO-') || /^\d+$/.test(query)) {
       priority = 'sales';
     }
 
