@@ -24,6 +24,17 @@ function httpsGet(url, headers) {
   });
 }
 
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '';
+    return d.toISOString().split('T')[0];
+  } catch (e) {
+    return '';
+  }
+}
+
 module.exports = async function (req, res) {
   // Global CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -59,23 +70,27 @@ module.exports = async function (req, res) {
       // Limit to top 5 detailed fetches to prevent rate limiting
       const detailedProductsPromises = rawProducts.slice(0, 5).map(async (prod) => {
         try {
-          const detailRes = await httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/Product?ID=${prod.ID}`, headers);
+          const productId = prod.ProductID || prod.ID || '';
+          const detailRes = await httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/Product?ID=${productId}`, headers);
           if (detailRes.ok) {
             const productDetails = await detailRes.json();
             
-            // Extract BOM Components if present
+            // Extract BOM Components if active or true
             let bomComponents = [];
-            const bom = productDetails.BOM || productDetails.BillOfMaterials || {};
-            const lines = bom.Lines || bom.Components || bom.LinesList || [];
-            if (Array.isArray(lines)) {
-              bomComponents = lines.map(line => ({
-                SKU: line.ComponentSKU || line.SKU || line.ProductSKU || '',
-                Quantity: line.Quantity || line.Qty || 0
-              })).filter(comp => comp.SKU);
+            if (productDetails.BillOfMaterials === true || productDetails.BillOfMaterials === 'true' || productDetails.BOM) {
+              const bom = productDetails.BOM || productDetails.BillOfMaterials || {};
+              const lines = bom.Lines || bom.Components || bom.LinesList || [];
+              if (Array.isArray(lines)) {
+                bomComponents = lines.map(line => ({
+                  SKU: line.ComponentSKU || line.SKU || line.ProductSKU || '',
+                  Quantity: line.Quantity || line.Qty || 0,
+                  Name: line.Name || line.ComponentName || ''
+                })).filter(comp => comp.SKU);
+              }
             }
 
             return {
-              ID: prod.ID || productDetails.ID || '',
+              ID: productId || prod.ID || '',
               SKU: prod.SKU || productDetails.SKU || 'N/A',
               Name: prod.Name || productDetails.Name || 'Unnamed Product',
               Brand: productDetails.Brand || 'N/A',
@@ -91,12 +106,12 @@ module.exports = async function (req, res) {
             };
           }
         } catch (err) {
-          console.error(`Failed to fetch product details for ${prod.ID}:`, err);
+          console.error(`Failed to fetch product details for ${prod.ID || prod.ProductID}:`, err);
         }
         
         // Fallback to basic availability data if detailed fetch fails
         return {
-          ID: prod.ID,
+          ID: prod.ProductID || prod.ID,
           SKU: prod.SKU || 'N/A',
           Name: prod.Name || 'Unnamed Product',
           Brand: 'N/A',
@@ -123,7 +138,8 @@ module.exports = async function (req, res) {
       // Limit to top 5 detailed fetches to ensure performance and prevent rate limiting
       const detailedSalesPromises = rawSales.slice(0, 5).map(async (sale) => {
         try {
-          const detailRes = await httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/Sale?ID=${sale.ID}`, headers);
+          const saleId = sale.SaleID || sale.ID || '';
+          const detailRes = await httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/Sale?ID=${saleId}`, headers);
           if (detailRes.ok) {
             const saleDetails = await detailRes.json();
             
@@ -161,8 +177,9 @@ module.exports = async function (req, res) {
             }
 
             return {
-              ID: sale.ID || saleDetails.ID || '',
+              ID: saleId || saleDetails.ID || '',
               OrderNumber: sale.OrderNumber || saleDetails.OrderNumber || 'Unassigned',
+              OrderDate: formatDate(saleDetails.OrderDate || saleDetails.Created || sale.OrderDate),
               Status: saleDetails.Status || sale.Status || 'Draft',
               Customer: saleDetails.Customer || sale.Customer || 'Unknown Customer',
               Email: saleDetails.Email || saleDetails.ContactEmail || 'N/A',
@@ -178,13 +195,14 @@ module.exports = async function (req, res) {
             };
           }
         } catch (err) {
-          console.error(`Failed to fetch sale details for ${sale.ID}:`, err);
+          console.error(`Failed to fetch sale details for ${sale.SaleID || sale.ID}:`, err);
         }
         
         // Fallback to basic list data if detailed fetch fails
         return {
-          ID: sale.ID,
+          ID: sale.SaleID || sale.ID,
           OrderNumber: sale.OrderNumber || 'Unassigned',
+          OrderDate: formatDate(sale.OrderDate),
           Status: sale.Status || 'Draft',
           Customer: sale.Customer || 'Unknown Customer',
           Email: 'N/A',

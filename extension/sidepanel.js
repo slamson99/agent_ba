@@ -21,10 +21,12 @@ const settingsPanel = document.getElementById('settings-panel');
 const backendUrlInput = document.getElementById('backend-url');
 const saveSettingsBtn = document.getElementById('save-settings-btn');
 
-// Constants
+// Constants & Filtering State
 const DEFAULT_BACKEND_URL = 'https://agent-ba.vercel.app';
 let backendUrl = DEFAULT_BACKEND_URL;
 let searchDebounceTimeout = null;
+let currentResults = null;
+const filterSortSelect = document.getElementById('filter-sort');
 
 // Initialize Settings
 document.addEventListener('DOMContentLoaded', () => {
@@ -112,6 +114,7 @@ function resetUI() {
   productsSection.classList.add('hidden');
   searchTriageBadge.classList.add('hidden');
   emptyState.classList.remove('hidden');
+  currentResults = null;
 }
 
 // Perform API global search call
@@ -141,7 +144,8 @@ async function executeSearch(query) {
     }
 
     const data = await response.json();
-    renderResults(data);
+    currentResults = data;
+    applyFilterAndRender();
 
   } catch (error) {
     console.error("Search failed:", error);
@@ -149,6 +153,57 @@ async function executeSearch(query) {
     errorMessage.textContent = error.message || "Unable to reach server. Check backend URL configuration.";
     errorBanner.classList.remove('hidden');
   }
+}
+
+// Filter & Sort Change listener
+if (filterSortSelect) {
+  filterSortSelect.addEventListener('change', () => {
+    if (!currentResults) return;
+    applyFilterAndRender();
+  });
+}
+
+function applyFilterAndRender() {
+  const sortVal = filterSortSelect ? filterSortSelect.value : 'default';
+  
+  // Clone results to avoid mutating original state
+  const dataCopy = {
+    ...currentResults,
+    sales: currentResults.sales ? [...currentResults.sales] : [],
+    products: currentResults.products ? [...currentResults.products] : []
+  };
+
+  // Sort Sales by Date or Name
+  if (dataCopy.sales.length > 0) {
+    if (sortVal === 'date-desc') {
+      dataCopy.sales.sort((a, b) => {
+        const da = a.OrderDate ? new Date(a.OrderDate) : new Date(0);
+        const db = b.OrderDate ? new Date(b.OrderDate) : new Date(0);
+        return db - da;
+      });
+    } else if (sortVal === 'date-asc') {
+      dataCopy.sales.sort((a, b) => {
+        const da = a.OrderDate ? new Date(a.OrderDate) : new Date(0);
+        const db = b.OrderDate ? new Date(b.OrderDate) : new Date(0);
+        return da - db;
+      });
+    } else if (sortVal === 'name-az') {
+      dataCopy.sales.sort((a, b) => (a.Customer || '').localeCompare(b.Customer || ''));
+    } else if (sortVal === 'name-za') {
+      dataCopy.sales.sort((a, b) => (b.Customer || '').localeCompare(a.Customer || ''));
+    }
+  }
+
+  // Sort Products by Name
+  if (dataCopy.products.length > 0) {
+    if (sortVal === 'name-az') {
+      dataCopy.products.sort((a, b) => (a.Name || '').localeCompare(b.Name || ''));
+    } else if (sortVal === 'name-za') {
+      dataCopy.products.sort((a, b) => (b.Name || '').localeCompare(a.Name || ''));
+    }
+  }
+
+  renderResults(dataCopy);
 }
 
 // Render dynamic results
@@ -222,6 +277,7 @@ function createSaleCard(sale) {
   const saleId = sale.ID || '';
   const orderNumber = sale.OrderNumber || 'Unassigned';
   const status = sale.Status || 'Draft';
+  const orderDate = sale.OrderDate || 'N/A';
   
   const invoiceNumber = sale.InvoiceNumber || 'N/A';
   const customerReference = sale.CustomerReference || 'N/A';
@@ -238,55 +294,72 @@ function createSaleCard(sale) {
   const shippingNotes = sale.ShippingNotes || 'N/A';
 
   const card = document.createElement('div');
-  card.className = 'bg-white border border-slate-200 rounded-lg p-3 shadow-sm hover:border-slate-300 transition-colors flex flex-col space-y-2.5 text-xs';
+  card.className = 'bg-white border border-slate-200 rounded-lg p-3 shadow-sm hover:border-slate-300 transition-colors flex flex-col text-xs';
 
   card.innerHTML = `
-    <div class="flex justify-between items-start">
-      <div>
+    <!-- Collapsible Header Summary Row -->
+    <div class="card-header flex justify-between items-center cursor-pointer select-none">
+      <div class="flex-grow pr-2">
         <h3 class="font-bold text-slate-800 text-[13px] flex items-center space-x-1.5">
           <span>${escapeHTML(orderNumber)}</span>
+          <span class="text-[10px] text-slate-400 font-normal">| ${escapeHTML(customer)}</span>
         </h3>
-        <p class="text-slate-500 font-medium text-[10px] mt-0.5">${escapeHTML(customer)}</p>
+        <p class="text-slate-400 font-medium text-[9px] mt-0.5">${escapeHTML(orderDate)}</p>
       </div>
-      <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${getStatusBadgeClass(status)}">
-        ${escapeHTML(status)}
-      </span>
+      <div class="flex items-center space-x-2">
+        <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold ${getStatusBadgeClass(status)}">
+          ${escapeHTML(status)}
+        </span>
+        <span class="toggle-icon text-slate-400 font-bold text-xs">▼</span>
+      </div>
     </div>
 
-    <div class="bg-slate-50 rounded border border-slate-100 p-2 space-y-1 text-[10px]">
-      <div class="flex justify-between"><span class="text-slate-500">Invoice Number:</span> <span class="font-bold text-slate-700">${escapeHTML(invoiceNumber)}</span></div>
-      <div class="flex justify-between"><span class="text-slate-500">Customer Ref:</span> <span class="font-bold text-slate-700">${escapeHTML(customerReference)}</span></div>
-    </div>
+    <!-- Collapsible Details Panel -->
+    <div class="card-details hidden space-y-2.5 border-t border-slate-100 pt-2.5 mt-2.5">
+      <div class="bg-slate-50 rounded border border-slate-100 p-2 space-y-1 text-[10px]">
+        <div class="flex justify-between"><span class="text-slate-500">Invoice Number:</span> <span class="font-bold text-slate-700">${escapeHTML(invoiceNumber)}</span></div>
+        <div class="flex justify-between"><span class="text-slate-500">Customer Ref:</span> <span class="font-bold text-slate-700">${escapeHTML(customerReference)}</span></div>
+      </div>
 
-    <div class="border border-slate-100 rounded p-2 space-y-1 text-[10px] bg-sky-50/30">
-      <div class="font-semibold text-slate-700 pb-0.5 border-b border-slate-100 uppercase tracking-wider text-[8px]">Customer Profile</div>
-      <div class="flex justify-between"><span class="text-slate-500">Email:</span> <span class="font-medium text-slate-700">${escapeHTML(email)}</span></div>
-      <div class="flex justify-between"><span class="text-slate-500">Sales Rep:</span> <span class="font-medium text-slate-700">${escapeHTML(salesRep)}</span></div>
-      <div class="flex justify-between"><span class="text-slate-500">Discount %:</span> <span class="font-medium text-slate-700">${discount}%</span></div>
-      <div class="flex justify-between"><span class="text-slate-500">Attrib 6:</span> <span class="font-medium text-slate-700">${escapeHTML(attribute6)}</span></div>
-    </div>
+      <div class="border border-slate-100 rounded p-2 space-y-1 text-[10px] bg-sky-50/30">
+        <div class="font-semibold text-slate-700 pb-0.5 border-b border-slate-100 uppercase tracking-wider text-[8px]">Customer Profile</div>
+        <div class="flex justify-between"><span class="text-slate-500">Email:</span> <span class="font-medium text-slate-700">${escapeHTML(email)}</span></div>
+        <div class="flex justify-between"><span class="text-slate-500">Sales Rep:</span> <span class="font-medium text-slate-700">${escapeHTML(salesRep)}</span></div>
+        <div class="flex justify-between"><span class="text-slate-500">Discount %:</span> <span class="font-medium text-slate-700">${discount}%</span></div>
+        <div class="flex justify-between"><span class="text-slate-500">Attrib 6:</span> <span class="font-medium text-slate-700">${escapeHTML(attribute6)}</span></div>
+      </div>
 
-    <div class="border border-slate-100 rounded p-2 space-y-1 text-[10px] bg-slate-50/50">
-      <div class="font-semibold text-slate-700 pb-0.5 border-b border-slate-100 uppercase tracking-wider text-[8px]">Logistics & Billing</div>
-      <div class="flex justify-between"><span class="text-slate-500">Fulfillment Status:</span> <span class="font-semibold text-slate-700">${escapeHTML(fulfilmentStatus)}</span></div>
-      <div class="flex justify-between"><span class="text-slate-500">Tracking Numbers:</span> <span class="font-semibold text-sky-700 select-all">${escapeHTML(combinedTracking)}</span></div>
-      <div class="flex justify-between"><span class="text-slate-500">Invoice Amount:</span> <span class="font-bold text-slate-800">$${invoiceAmount.toFixed(2)}</span></div>
-      <div class="pt-1 border-t border-slate-100 mt-1"><span class="text-slate-500 block pb-0.5">Shipping Notes:</span> <span class="text-slate-600 block italic leading-normal">${escapeHTML(shippingNotes)}</span></div>
-    </div>
+      <div class="border border-slate-100 rounded p-2 space-y-1 text-[10px] bg-slate-50/50">
+        <div class="font-semibold text-slate-700 pb-0.5 border-b border-slate-100 uppercase tracking-wider text-[8px]">Logistics & Billing</div>
+        <div class="flex justify-between"><span class="text-slate-500">Fulfillment Status:</span> <span class="font-semibold text-slate-700">${escapeHTML(fulfilmentStatus)}</span></div>
+        <div class="flex justify-between"><span class="text-slate-500">Tracking Numbers:</span> <span class="font-semibold text-sky-700 select-all">${escapeHTML(combinedTracking)}</span></div>
+        <div class="flex justify-between"><span class="text-slate-500">Invoice Amount:</span> <span class="font-bold text-slate-800">$${invoiceAmount.toFixed(2)}</span></div>
+        <div class="pt-1 border-t border-slate-100 mt-1"><span class="text-slate-500 block pb-0.5">Shipping Notes:</span> <span class="text-slate-600 block italic leading-normal">${escapeHTML(shippingNotes)}</span></div>
+      </div>
 
-    <div class="grid grid-cols-2 gap-2 pt-1">
-      <button class="download-btn sales-order shadow-sm bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded py-1 px-2 font-medium tracking-wide flex items-center justify-center space-x-1 transition-colors" data-id="${escapeHTML(saleId)}" data-type="Sale Order">
-        <span>📥 Sales Order</span>
+      <div class="grid grid-cols-2 gap-2 pt-1">
+        <button class="download-btn sales-order shadow-sm bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded py-1 px-2 font-medium tracking-wide flex items-center justify-center space-x-1 transition-colors" data-id="${escapeHTML(saleId)}" data-type="Sale Order">
+          <span>📥 Sales Order</span>
+        </button>
+        <button class="download-btn invoice shadow-sm bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded py-1 px-2 font-medium tracking-wide flex items-center justify-center space-x-1 transition-colors" data-id="${escapeHTML(saleId)}" data-type="Invoice">
+          <span>📥 Invoice</span>
+        </button>
+      </div>
+
+      <button class="copy-summary-btn w-full bg-slate-800 hover:bg-slate-900 text-white border border-transparent rounded py-1.5 px-2 font-semibold tracking-wide flex items-center justify-center space-x-1 transition-colors shadow-sm" data-summary="Order: ${escapeHTML(orderNumber)} | Customer: ${escapeHTML(customer)} | Status: ${escapeHTML(status)} | Tracking: ${escapeHTML(combinedTracking)}">
+        <span>📋 Copy Quick Summary</span>
       </button>
-      <button class="download-btn invoice shadow-sm bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded py-1 px-2 font-medium tracking-wide flex items-center justify-center space-x-1 transition-colors" data-id="${escapeHTML(saleId)}" data-type="Invoice">
-        <span>📥 Invoice</span>
-      </button>
     </div>
-
-    <button class="copy-summary-btn w-full bg-slate-800 hover:bg-slate-900 text-white border border-transparent rounded py-1.5 px-2 font-semibold tracking-wide flex items-center justify-center space-x-1 transition-colors shadow-sm" data-summary="Order: ${escapeHTML(orderNumber)} | Customer: ${escapeHTML(customer)} | Status: ${escapeHTML(status)} | Tracking: ${escapeHTML(combinedTracking)}">
-      <span>📋 Copy Quick Summary</span>
-    </button>
   `;
+
+  // Click handler to toggle collapsed details
+  const header = card.querySelector('.card-header');
+  const details = card.querySelector('.card-details');
+  const toggleIcon = card.querySelector('.toggle-icon');
+  header.addEventListener('click', () => {
+    const isHidden = details.classList.toggle('hidden');
+    toggleIcon.textContent = isHidden ? '▼' : '▲';
+  });
 
   // Attach event listeners to buttons
   card.querySelectorAll('.download-btn').forEach(btn => {
@@ -326,7 +399,7 @@ function createProductRow(product) {
   const fragment = document.createDocumentFragment();
 
   const mainRow = document.createElement('tr');
-  mainRow.className = 'border-t border-slate-200 hover:bg-slate-50 transition-colors font-medium text-slate-800';
+  mainRow.className = 'border-t border-slate-200 hover:bg-slate-50 transition-colors font-medium text-slate-800 cursor-pointer select-none';
 
   const sku = product.SKU || 'N/A';
   const name = product.Name || 'Unnamed Product';
@@ -343,7 +416,10 @@ function createProductRow(product) {
   mainRow.innerHTML = `
     <td class="px-2.5 py-2 font-semibold text-slate-800 tracking-tight">${escapeHTML(sku)}</td>
     <td class="px-2.5 py-2 text-slate-600 truncate max-w-[120px]" title="${escapeHTML(name)}">${escapeHTML(name)}</td>
-    <td class="px-2.5 py-2 text-slate-500">${escapeHTML(brand)}</td>
+    <td class="px-2.5 py-2 text-slate-500 flex justify-between items-center">
+      <span>${escapeHTML(brand)}</span>
+      <span class="toggle-icon text-slate-400 font-mono text-[9px] ml-1">▼</span>
+    </td>
   `;
   fragment.appendChild(mainRow);
 
@@ -365,7 +441,7 @@ function createProductRow(product) {
       <div class="mt-1.5 p-1.5 bg-white border border-slate-100 rounded">
         <div class="font-bold text-slate-700 text-[8px] uppercase tracking-wider mb-1">Components (BOM)</div>
         <ul class="space-y-0.5 list-disc pl-3 text-[9px] text-slate-500">
-          ${product.BOM.map(c => `<li><span class="font-medium text-slate-700">${escapeHTML(c.SKU)}</span> (Qty: ${c.Quantity})</li>`).join('')}
+          ${product.BOM.map(c => `<li><span class="font-medium text-slate-700">${escapeHTML(c.SKU)}</span> (Qty: ${c.Quantity}${c.Name ? ` - ${escapeHTML(c.Name)}` : ''})</li>`).join('')}
         </ul>
       </div>
     `;
@@ -373,7 +449,7 @@ function createProductRow(product) {
 
   detailRow.innerHTML = `
     <td colspan="3" class="px-2.5 pb-2.5 pt-0.5">
-      <div class="flex flex-col space-y-1">
+      <div class="card-details hidden flex flex-col space-y-1">
         <div class="flex items-center space-x-3 text-[10px]">
           <span class="font-medium">Current Stock: <strong class="text-sky-700 font-bold">${currentStock}</strong></span>
           <span class="text-slate-300">|</span>
@@ -387,6 +463,14 @@ function createProductRow(product) {
     </td>
   `;
   fragment.appendChild(detailRow);
+
+  // Click handler to toggle collapsed details
+  const detailsContainer = detailRow.querySelector('.card-details');
+  const toggleIcon = mainRow.querySelector('.toggle-icon');
+  mainRow.addEventListener('click', () => {
+    const isHidden = detailsContainer.classList.toggle('hidden');
+    toggleIcon.textContent = isHidden ? '▼' : '▲';
+  });
 
   return fragment;
 }
