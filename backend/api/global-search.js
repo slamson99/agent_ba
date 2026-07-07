@@ -11,6 +11,39 @@ function formatDate(dateStr) {
   }
 }
 
+// Deep recursive key scanner for tracking numbers
+function scanForTrackingNumbers(obj, trackingList = []) {
+  if (!obj || typeof obj !== 'object') return trackingList;
+
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      scanForTrackingNumbers(item, trackingList);
+    }
+  } else {
+    for (const key of Object.keys(obj)) {
+      const val = obj[key];
+      if (key.toLowerCase().includes('tracking')) {
+        if (typeof val === 'string' && val.trim()) {
+          val.split(/[,;]/).forEach(t => {
+            const cleaned = t.trim();
+            if (cleaned && !trackingList.includes(cleaned)) {
+              trackingList.push(cleaned);
+            }
+          });
+        } else if (typeof val === 'number') {
+          const cleaned = String(val).trim();
+          if (cleaned && !trackingList.includes(cleaned)) {
+            trackingList.push(cleaned);
+          }
+        }
+      } else {
+        scanForTrackingNumbers(val, trackingList);
+      }
+    }
+  }
+  return trackingList;
+}
+
 module.exports = async function (req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -38,10 +71,16 @@ module.exports = async function (req, res) {
     let products = [];
     let sales = [];
 
-    // Parse Product List
+    // Parse Product List with Strict Product Matching Guard
     if (productsRes.status === 'fulfilled' && productsRes.value.ok) {
       const pData = await productsRes.value.json();
-      products = pData.Products || [];
+      const rawProducts = pData.Products || [];
+      const qLower = cleanQuery.toLowerCase();
+      // Only retain products where SKU or Name contains the query
+      products = rawProducts.filter(p =>
+        (p.SKU || '').toLowerCase().includes(qLower) ||
+        (p.Name || '').toLowerCase().includes(qLower)
+      );
     }
 
     // Parse Sales List & Filter VOID orders
@@ -51,7 +90,7 @@ module.exports = async function (req, res) {
       sales = rawSales.filter(s => s.Status && s.Status.toUpperCase() !== 'VOID' && s.Status.toUpperCase() !== 'VOIDED');
     }
 
-    // Deep Hydration for matching Sales to get detailed Invoice, Tracking, and Area Code data
+    // Hydrate Sales concurrently
     const detailedSales = await Promise.all(sales.slice(0, 5).map(async (sale) => {
       try {
         const saleId = sale.SaleID || sale.ID || '';
@@ -64,65 +103,19 @@ module.exports = async function (req, res) {
         if (detailRes.ok) detailData = await detailRes.json();
         if (fulRes.ok) fulData = await fulRes.json();
 
-        // Extract Ship lines tracking from the model
-        let trackingNumbers = [];
+        // Run deep recursive tracking scanner on returned JSON payloads
+        const trackingList = [];
+        scanForTrackingNumbers(detailData, trackingList);
+        scanForTrackingNumbers(fulData, trackingList);
+
+        // Fetch shipping notes
         let shippingNotesList = [];
-
-        // Primary check
-        if (fulData.Fulfilment && fulData.Fulfilment.Shipment && fulData.Fulfilment.Shipment.Lines) {
-          trackingNumbers = fulData.Fulfilment.Shipment.Lines
-            .map(line => line.TrackingNumber)
-            .filter(t => t);
-          if (fulData.Fulfilment.Shipment.Notes) {
-            shippingNotesList.push(fulData.Fulfilment.Shipment.Notes);
-          }
-        }
-
-        // Secondary fallback checking
+        if (detailData.ShippingNotes) shippingNotesList.push(detailData.ShippingNotes);
         const fulfillments = detailData.Fulfillments || detailData.Fulfillment || [];
         if (Array.isArray(fulfillments)) {
           fulfillments.forEach(f => {
-            if (f) {
-              const ship = f.Ship || f.Shipment || {};
-              if (ship.Lines && Array.isArray(ship.Lines)) {
-                ship.Lines.forEach(l => {
-                  if (l && l.TrackingNumber) trackingNumbers.push(l.TrackingNumber);
-                });
-              }
-              if (ship.TrackingNumber) {
-                trackingNumbers.push(ship.TrackingNumber);
-              }
-              if (ship.Notes || ship.ShippingNotes || ship.Comment) {
-                shippingNotesList.push(ship.Notes || ship.ShippingNotes || ship.Comment);
-              }
-            }
-          });
-        }
-
-        const fList = fulData.Fulfillments || fulData.Fulfillment || fulData.FulfillmentsList || [];
-        if (Array.isArray(fList)) {
-          fList.forEach(f => {
-            if (f) {
-              const ship = f.Ship || f.Shipment || {};
-              const lines = ship.Lines || ship.ShipmentLines || [];
-              if (Array.isArray(lines)) {
-                lines.forEach(l => {
-                  if (l) {
-                    if (l.TrackingNumber) {
-                      trackingNumbers.push(l.TrackingNumber);
-                    }
-                    if (l.ShipmentStatus) {
-                      trackingNumbers.push(`Status: ${l.ShipmentStatus}`);
-                    }
-                  }
-                });
-              }
-              if (ship.TrackingNumber) {
-                trackingNumbers.push(ship.TrackingNumber);
-              }
-              if (ship.Notes || ship.ShippingNotes || ship.Comment || ship.ConnectionNotes) {
-                shippingNotesList.push(ship.Notes || ship.ShippingNotes || ship.Comment || ship.ConnectionNotes);
-              }
+            if (f && f.Ship && (f.Ship.Notes || f.Ship.ShippingNotes || f.Ship.Comment)) {
+              shippingNotesList.push(f.Ship.Notes || f.Ship.ShippingNotes || f.Ship.Comment);
             }
           });
         }
@@ -168,12 +161,12 @@ module.exports = async function (req, res) {
           InvoiceStatus: invoiceStatus,
           InvoiceAmount: invoiceAmount || 0,
           CustomerReference: detailData.CustomerReference || 'N/A',
-          ShippingNotes: shippingNotesList.filter((v, i, a) => a.indexOf(v) === i && v).join('; ') || detailData.ShippingNotes || 'N/A',
+          ShippingNotes: shippingNotesList.filter((v, i, a) => a.indexOf(v) === i && v).join('; ') || 'N/A',
           AreaCode: additionalAttribute6,
           SalesRepresentative: detailData.SalesRepresentative || 'N/A',
           Discount: detailData.Discount || 0,
           Email: detailData.Email || 'N/A',
-          TrackingNumber: trackingNumbers.filter((v, i, a) => a.indexOf(v) === i && v).join(', ') || 'N/A',
+          TrackingNumber: trackingList.length > 0 ? trackingList.join(', ') : 'N/A',
           OrderLines: detailData.Order ? (detailData.Order.Lines || []) : []
         };
       } catch (err) {
@@ -182,15 +175,8 @@ module.exports = async function (req, res) {
       }
     }));
 
-    // Dynamic Relevance Priority Sorting
-    const cleanQueryLower = cleanQuery.toLowerCase();
+    // Default Sort Allocation: Newest sales orders first
     detailedSales.sort((a, b) => {
-      const aName = (a.Customer || '').toLowerCase();
-      const bName = (b.Customer || '').toLowerCase();
-      const aExact = aName === cleanQueryLower || a.OrderNumber.toLowerCase() === cleanQueryLower;
-      const bExact = bName === cleanQueryLower || b.OrderNumber.toLowerCase() === cleanQueryLower;
-      if (aExact && !bExact) return -1;
-      if (!aExact && bExact) return 1;
       const da = a.OrderDate ? new Date(a.OrderDate) : new Date(0);
       const db = b.OrderDate ? new Date(b.OrderDate) : new Date(0);
       return db - da;

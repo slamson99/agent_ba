@@ -252,7 +252,6 @@ function resetUI() {
   paginationControls.classList.add('hidden');
   emptyState.classList.remove('hidden');
   
-  // Clear any existing unified results lists
   const resultsList = document.getElementById('unified-results-list');
   if (resultsList) resultsList.innerHTML = '';
   
@@ -292,9 +291,11 @@ async function executeSearch(query) {
 
   } catch (error) {
     console.error("Search failed:", error);
-    loader.classList.add('hidden');
     errorMessage.textContent = error.message || "Unable to reach server. Check backend URL configuration.";
     errorBanner.classList.remove('hidden');
+  } finally {
+    // Bulletproof Loader Lifecycle: spinner turns off under all circumstances
+    loader.classList.add('hidden');
   }
 }
 
@@ -321,7 +322,6 @@ function getCombinedSortedItems() {
 
   const productsList = currentResults.products || [];
 
-  // Wrap items to identify type
   const combinedItems = [
     ...filteredSales.map(s => ({ type: 'sale', data: s })),
     ...productsList.map(p => ({ type: 'product', data: p }))
@@ -336,7 +336,6 @@ function getCombinedSortedItems() {
       const scoreB = getRelevanceScore(nameB, queryText);
       if (scoreA !== scoreB) return scoreB - scoreA;
 
-      // Group Sales first by default
       if (a.type !== b.type) {
         return a.type === 'sale' ? -1 : 1;
       }
@@ -389,28 +388,25 @@ function applyFilterAndRender() {
 
   emptyState.classList.add('hidden');
 
-  // Compute pagination parameters (strictly 10 slots per frame)
+  // Compute pagination parameters
   const totalPages = Math.ceil(totalItems / PAGE_SIZE) || 1;
   if (currentPage > totalPages) currentPage = totalPages;
   if (currentPage < 1) currentPage = 1;
 
-  // Extract dynamic slice for the active page view
+  // Extract page items slice
   const startIndex = (currentPage - 1) * PAGE_SIZE;
   const pageItems = combinedItems.slice(startIndex, startIndex + PAGE_SIZE);
 
-  // Update Pagination controls
   pageIndicator.textContent = `Page ${currentPage} of ${totalPages}`;
   prevPageBtn.disabled = currentPage === 1;
   nextPageBtn.disabled = currentPage === totalPages;
   paginationControls.classList.remove('hidden');
 
-  // Update triage priority indicator based on the top match type
   if (pageItems.length > 0) {
     triageType.textContent = pageItems[0].type === 'sale' ? 'Customer Sales' : 'Product Inventory';
     searchTriageBadge.classList.remove('hidden');
   }
 
-  // Populate Unified list container
   let resultsList = document.getElementById('unified-results-list');
   if (!resultsList) {
     resultsList = document.createElement('div');
@@ -431,7 +427,7 @@ function applyFilterAndRender() {
   resultsPanel.classList.remove('hidden');
 }
 
-// Generate Product availability Card element (replaces table view for layout unification)
+// Generate Product availability Card element (collapsed by default)
 function createProductCard(product) {
   const sku = product.SKU || 'N/A';
   const name = product.Name || 'Unnamed Product';
@@ -560,7 +556,7 @@ function createSaleCard(sale) {
   const card = document.createElement('div');
   card.className = 'bg-white border border-slate-200 rounded-lg p-3 shadow-sm hover:border-slate-300 transition-colors flex flex-col text-xs';
 
-  // Nest product availability mapping directly alongside the sales cards
+  // Nest product availability mapping directly inside the sales cards
   let linesHtml = '';
   if (sale.OrderLines && sale.OrderLines.length > 0) {
     linesHtml = `
@@ -649,16 +645,14 @@ function createSaleCard(sale) {
       <!-- Embedded Order Lines & availability details -->
       ${linesHtml}
 
-      <div class="grid grid-cols-2 gap-2 pt-1">
-        <button class="download-btn sales-order shadow-sm bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded py-1 px-2 font-medium tracking-wide flex items-center justify-center space-x-1 transition-colors" data-id="${escapeHTML(saleId)}" data-type="Sale Order">
-          <span>📥 Sales Order</span>
-        </button>
-        <button class="download-btn invoice shadow-sm bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded py-1 px-2 font-medium tracking-wide flex items-center justify-center space-x-1 transition-colors" data-id="${escapeHTML(saleId)}" data-type="Invoice">
-          <span>📥 Invoice</span>
+      <!-- UI Clean-up: Only Keep Invoice PDF button -->
+      <div class="pt-1">
+        <button class="download-btn invoice w-full shadow-sm bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded py-1.5 px-2 font-semibold tracking-wide flex items-center justify-center space-x-1 transition-colors" data-id="${escapeHTML(saleId)}" data-type="Invoice">
+          <span>📥 Download Invoice PDF</span>
         </button>
       </div>
 
-      <button class="copy-summary-btn w-full bg-slate-800 hover:bg-slate-900 text-white border border-transparent rounded py-1.5 px-2 font-semibold tracking-wide flex items-center justify-center space-x-1 transition-colors shadow-sm" data-summary="Order: ${escapeHTML(orderNumber)} | Customer: ${escapeHTML(customer)} | Status: ${escapeHTML(status)} | Tracking: ${escapeHTML(combinedTracking)}">
+      <button class="copy-summary-btn w-full bg-slate-800 hover:bg-slate-900 text-white border border-transparent rounded py-1.5 px-2 font-semibold tracking-wide flex items-center justify-center space-x-1 transition-colors shadow-sm animate-pulse" data-summary="Order: ${escapeHTML(orderNumber)} | Customer: ${escapeHTML(customer)} | Status: ${escapeHTML(status)} | Tracking: ${escapeHTML(combinedTracking)}">
         <span>📋 Copy Quick Summary</span>
       </button>
     </div>
@@ -673,13 +667,11 @@ function createSaleCard(sale) {
     toggleIcon.textContent = isHidden ? '▼' : '▲';
   });
 
-  // Attach event listeners to buttons
-  card.querySelectorAll('.download-btn').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      const type = btn.getAttribute('data-type');
-      const id = btn.getAttribute('data-id');
-      await downloadDocument(btn, id, type);
-    });
+  // Attach event listener to download button
+  card.querySelector('.download-btn.invoice').addEventListener('click', async (e) => {
+    const type = e.currentTarget.getAttribute('data-type');
+    const id = e.currentTarget.getAttribute('data-id');
+    await downloadDocument(e.currentTarget, id, type);
   });
 
   const copyBtn = card.querySelector('.copy-summary-btn');
@@ -689,12 +681,12 @@ function createSaleCard(sale) {
       .then(() => {
         const originalText = copyBtn.innerHTML;
         copyBtn.innerHTML = '<span>✅ Copied to Clipboard</span>';
-        copyBtn.classList.remove('bg-slate-800');
+        copyBtn.classList.remove('bg-slate-800', 'animate-pulse');
         copyBtn.classList.add('bg-emerald-600');
         setTimeout(() => {
           copyBtn.innerHTML = originalText;
           copyBtn.classList.remove('bg-emerald-600');
-          copyBtn.classList.add('bg-slate-800');
+          copyBtn.classList.add('bg-slate-800', 'animate-pulse');
         }, 2000);
       })
       .catch(err => {
@@ -718,7 +710,7 @@ async function downloadDocument(button, saleId, type) {
   button.innerHTML = '<span>⏳ Downloading...</span>';
 
   const sanitizedUrl = backendUrl.replace(/\/$/, '');
-  const downloadUrl = `${sanitizedUrl}/api/download-doc?saleId=${encodeURIComponent(saleId)}&documentType=${encodeURIComponent(type)}`;
+  const downloadUrl = `${sanitizedUrl}/api/download-doc?saleId=${encodeURIComponent(saleId)}`;
 
   try {
     const response = await fetch(downloadUrl);
@@ -737,7 +729,7 @@ async function downloadDocument(button, saleId, type) {
     
     const link = document.createElement('a');
     link.href = blobUrl;
-    link.download = `${type.replace(/\s+/g, '_')}_${saleId}.pdf`;
+    link.download = `Invoice_${saleId}.pdf`;
     document.body.appendChild(link);
     link.click();
     
