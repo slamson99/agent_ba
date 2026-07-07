@@ -42,6 +42,17 @@ let currentPage = 1;
 
 const filterSortSelect = document.getElementById('filter-sort');
 
+// Missing Relevance logic for default sorting ranking
+function getRelevanceScore(name, query) {
+  if (!name || !query) return 0;
+  const n = name.toLowerCase();
+  const q = query.toLowerCase();
+  if (n === q) return 100;
+  if (n.startsWith(q)) return 80;
+  if (n.includes(q)) return 50;
+  return 0;
+}
+
 // Initialize Settings
 document.addEventListener('DOMContentLoaded', () => {
   // Load backend URL from storage
@@ -201,6 +212,7 @@ function showSuggestions(query) {
     return;
   }
 
+  // Verify Case-Insensitive Suggestion Rendering Lowercase Casing
   const qLower = query.toLowerCase();
   
   // Instantly filter local cached dataset case-insensitively
@@ -331,7 +343,7 @@ if (filterSortSelect) {
 
 function applyFilterAndRender() {
   const sortVal = filterSortSelect ? filterSortSelect.value : 'default';
-  const queryText = searchInput.value.trim();
+  const queryText = searchInput.value.trim().toLowerCase();
   
   // Clone results to avoid mutating original state
   const dataCopy = {
@@ -660,7 +672,7 @@ function createProductRow(product) {
     `;
   }
 
-  // Format BOM components
+  // Format BOM components (graceful fallback if BOM is missing)
   let bomHtml = '';
   if (product.BOM && Array.isArray(product.BOM) && product.BOM.length > 0) {
     bomHtml = `

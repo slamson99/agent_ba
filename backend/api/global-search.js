@@ -45,7 +45,7 @@ module.exports = async function (req, res) {
   const { query, scope } = req.query;
   if (!query) return res.status(400).json({ error: "Missing query parameter" });
 
-  // Cast incoming query to lowercase for case-insensitive sync matches
+  // Case-Insensitive sync lowercase cast
   const lowercaseQuery = query.toLowerCase();
 
   const headers = {
@@ -82,7 +82,7 @@ module.exports = async function (req, res) {
         const availData = await availabilityRes.value.json();
         const list = availData.ProductAvailabilityList || [];
         list.forEach(item => {
-          if (item.SKU) {
+          if (item && item.SKU) {
             availabilityMap[item.SKU.toLowerCase()] = item;
           }
         });
@@ -104,23 +104,26 @@ module.exports = async function (req, res) {
           if (detailRes.ok) {
             const productDetails = await detailRes.json();
             
-            // Extract BOM Components if active or true
+            // Extract BOM Components if active or true (with defensive empty fallbacks)
             let bomComponents = [];
-            if (productDetails.BillOfMaterials === true || productDetails.BillOfMaterials === 'true' || productDetails.BOM) {
+            if (productDetails && (productDetails.BillOfMaterials === true || productDetails.BillOfMaterials === 'true' || productDetails.BOM)) {
               const bom = productDetails.BOM || productDetails.BillOfMaterials || {};
               const lines = bom.Lines || bom.Components || bom.LinesList || [];
               if (Array.isArray(lines)) {
-                bomComponents = lines.map(line => ({
-                  SKU: line.ComponentSKU || line.SKU || line.ProductSKU || '',
-                  Quantity: line.Quantity || line.Qty || 0,
-                  Name: line.Name || line.ComponentName || ''
-                })).filter(comp => comp.SKU);
+                bomComponents = lines.map(line => {
+                  if (!line) return null;
+                  return {
+                    SKU: line.ComponentSKU || line.SKU || line.ProductSKU || '',
+                    Quantity: line.Quantity || line.Qty || 0,
+                    Name: line.Name || line.ComponentName || ''
+                  };
+                }).filter(comp => comp && comp.SKU);
               }
             }
 
             // Extract family parameters if present
             let family = null;
-            if (productDetails.ProductFamily || productDetails.ProductFamilyID || productDetails.ProductFamilySKU) {
+            if (productDetails && (productDetails.ProductFamily || productDetails.ProductFamilyID || productDetails.ProductFamilySKU)) {
               family = {
                 ID: productDetails.ProductFamilyID || '',
                 Name: productDetails.ProductFamily || '',
@@ -195,7 +198,7 @@ module.exports = async function (req, res) {
           if (detailRes.status === 'fulfilled' && detailRes.value.ok) {
             const saleDetails = await detailRes.value.json();
             
-            // Extract tracking & shipping details from both payloads
+            // Extract tracking & shipping details from both payloads defensively
             let trackingNumbers = [];
             let shippingNotesList = [];
             
@@ -203,17 +206,19 @@ module.exports = async function (req, res) {
             const fulfillments = saleDetails.Fulfillments || saleDetails.Fulfillment || [];
             if (Array.isArray(fulfillments)) {
               fulfillments.forEach(f => {
-                const ship = f.Ship || f.Shipment || {};
-                if (ship.Lines && Array.isArray(ship.Lines)) {
-                  ship.Lines.forEach(l => {
-                    if (l.TrackingNumber) trackingNumbers.push(l.TrackingNumber);
-                  });
-                }
-                if (ship.TrackingNumber) {
-                  trackingNumbers.push(ship.TrackingNumber);
-                }
-                if (ship.Notes || ship.ShippingNotes || ship.Comment) {
-                  shippingNotesList.push(ship.Notes || ship.ShippingNotes || ship.Comment);
+                if (f) {
+                  const ship = f.Ship || f.Shipment || {};
+                  if (ship.Lines && Array.isArray(ship.Lines)) {
+                    ship.Lines.forEach(l => {
+                      if (l && l.TrackingNumber) trackingNumbers.push(l.TrackingNumber);
+                    });
+                  }
+                  if (ship.TrackingNumber) {
+                    trackingNumbers.push(ship.TrackingNumber);
+                  }
+                  if (ship.Notes || ship.ShippingNotes || ship.Comment) {
+                    shippingNotesList.push(ship.Notes || ship.ShippingNotes || ship.Comment);
+                  }
                 }
               });
             }
@@ -222,28 +227,34 @@ module.exports = async function (req, res) {
             if (fulfilmentRes.status === 'fulfilled' && fulfilmentRes.value.ok) {
               try {
                 const fData = await fulfilmentRes.value.json();
-                const fList = fData.Fulfillments || fData.Fulfillment || fData.FulfillmentsList || [];
-                if (Array.isArray(fList)) {
-                  fList.forEach(f => {
-                    const ship = f.Ship || f.Shipment || {};
-                    const lines = ship.Lines || ship.ShipmentLines || [];
-                    if (Array.isArray(lines)) {
-                      lines.forEach(l => {
-                        if (l.TrackingNumber) {
-                          trackingNumbers.push(l.TrackingNumber);
+                if (fData) {
+                  const fList = fData.Fulfillments || fData.Fulfillment || fData.FulfillmentsList || [];
+                  if (Array.isArray(fList)) {
+                    fList.forEach(f => {
+                      if (f) {
+                        const ship = f.Ship || f.Shipment || {};
+                        const lines = ship.Lines || ship.ShipmentLines || [];
+                        if (Array.isArray(lines)) {
+                          lines.forEach(l => {
+                            if (l) {
+                              if (l.TrackingNumber) {
+                                trackingNumbers.push(l.TrackingNumber);
+                              }
+                              if (l.ShipmentStatus) {
+                                trackingNumbers.push(`Status: ${l.ShipmentStatus}`);
+                              }
+                            }
+                          });
                         }
-                        if (l.ShipmentStatus) {
-                          trackingNumbers.push(`Status: ${l.ShipmentStatus}`);
+                        if (ship.TrackingNumber) {
+                          trackingNumbers.push(ship.TrackingNumber);
                         }
-                      });
-                    }
-                    if (ship.TrackingNumber) {
-                      trackingNumbers.push(ship.TrackingNumber);
-                    }
-                    if (ship.Notes || ship.ShippingNotes || ship.Comment || ship.ConnectionNotes) {
-                      shippingNotesList.push(ship.Notes || ship.ShippingNotes || ship.Comment || ship.ConnectionNotes);
-                    }
-                  });
+                        if (ship.Notes || ship.ShippingNotes || ship.Comment || ship.ConnectionNotes) {
+                          shippingNotesList.push(ship.Notes || ship.ShippingNotes || ship.Comment || ship.ConnectionNotes);
+                        }
+                      }
+                    });
+                  }
                 }
               } catch (e) {
                 console.error("Failed to parse hydrated Sale/Fulfilment details:", e);
@@ -260,22 +271,24 @@ module.exports = async function (req, res) {
             const invoiceArr = Array.isArray(invoices) ? invoices : (invoices ? [invoices] : []);
             if (invoiceArr.length > 0) {
               const primaryInvoice = invoiceArr[0];
-              invoiceNumber = primaryInvoice.InvoiceNumber || 'N/A';
-              invoiceAmount = primaryInvoice.Total || primaryInvoice.InvoiceTotal || 0;
-              invoiceDueDate = formatDate(primaryInvoice.DueDate || primaryInvoice.InvoiceDueDate || primaryInvoice.InvoiceDate);
-              
-              // Evaluate payment status
-              const invStatus = (primaryInvoice.Status || '').toUpperCase();
-              const balanceDue = primaryInvoice.BalanceDue !== undefined 
-                ? primaryInvoice.BalanceDue 
-                : (invoiceAmount - (primaryInvoice.Paid || 0));
-              
-              if (invStatus === 'PAID' || balanceDue <= 0) {
-                paymentStatus = 'PAID';
-              } else if (invStatus === 'PARTIALLY PAID' || (balanceDue > 0 && balanceDue < invoiceAmount)) {
-                paymentStatus = 'PARTIALLY PAID';
-              } else {
-                paymentStatus = 'UNPAID';
+              if (primaryInvoice) {
+                invoiceNumber = primaryInvoice.InvoiceNumber || 'N/A';
+                invoiceAmount = primaryInvoice.Total || primaryInvoice.InvoiceTotal || 0;
+                invoiceDueDate = formatDate(primaryInvoice.DueDate || primaryInvoice.InvoiceDueDate || primaryInvoice.InvoiceDate);
+                
+                // Evaluate payment status
+                const invStatus = (primaryInvoice.Status || '').toUpperCase();
+                const balanceDue = primaryInvoice.BalanceDue !== undefined 
+                  ? primaryInvoice.BalanceDue 
+                  : (invoiceAmount - (primaryInvoice.Paid || 0));
+                
+                if (invStatus === 'PAID' || balanceDue <= 0) {
+                  paymentStatus = 'PAID';
+                } else if (invStatus === 'PARTIALLY PAID' || (balanceDue > 0 && balanceDue < invoiceAmount)) {
+                  paymentStatus = 'PARTIALLY PAID';
+                } else {
+                  paymentStatus = 'UNPAID';
+                }
               }
             }
 
