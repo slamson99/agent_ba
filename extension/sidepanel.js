@@ -174,6 +174,7 @@ function getOrCreateSuggestList() {
   return suggestList;
 }
 
+// Refined Auto-Suggest Logic: Focus strictly on Customer Name strings
 function showSuggestions(query) {
   const suggestList = getOrCreateSuggestList();
   suggestList.innerHTML = '';
@@ -185,54 +186,39 @@ function showSuggestions(query) {
 
   const qLower = query.toLowerCase();
   
-  // Instantly filter local cached dataset case-insensitively
+  // Only search and filter by Customer Name strings
   const matchedSales = (currentResults.sales || []).filter(s => 
-    (s.OrderNumber || '').toLowerCase().includes(qLower) ||
-    (s.Customer || '').toLowerCase().includes(qLower) ||
-    (s.InvoiceNumber || '').toLowerCase().includes(qLower)
+    (s.Customer || '').toLowerCase().includes(qLower)
   );
 
-  const matchedProducts = (currentResults.products || []).filter(p => 
-    (p.SKU || '').toLowerCase().includes(qLower) ||
-    (p.Name || '').toLowerCase().includes(qLower) ||
-    (p.Brand || '').toLowerCase().includes(qLower)
-  );
+  // Group by unique Customer Name to avoid duplicate suggestions
+  const uniqueCustomers = [];
+  const uniqueMatchedSales = [];
+  
+  matchedSales.forEach(s => {
+    if (s.Customer && !uniqueCustomers.includes(s.Customer.toLowerCase())) {
+      uniqueCustomers.push(s.Customer.toLowerCase());
+      uniqueMatchedSales.push(s);
+    }
+  });
 
-  const totalMatches = matchedSales.length + matchedProducts.length;
-
-  if (totalMatches === 0) {
+  if (uniqueMatchedSales.length === 0) {
     suggestList.classList.add('hidden');
     return;
   }
 
-  // Render sales suggestions
-  matchedSales.slice(0, 5).forEach(s => {
+  // Render unique customer suggestions (up to 5)
+  uniqueMatchedSales.slice(0, 5).forEach(s => {
     const row = document.createElement('div');
-    row.className = 'px-3 py-2 hover:bg-slate-50 cursor-pointer flex justify-between items-center transition-colors';
+    row.className = 'px-3 py-2.5 hover:bg-slate-50 cursor-pointer flex justify-between items-center transition-colors';
     row.innerHTML = `
-      <div class="font-medium text-slate-700">📋 ${escapeHTML(s.OrderNumber)}</div>
-      <div class="text-[10px] text-slate-400 font-semibold">${escapeHTML(s.Customer)}</div>
+      <div class="font-bold text-slate-700">👤 ${escapeHTML(s.Customer)}</div>
+      <div class="text-[10px] text-slate-400 font-semibold">Customer Match</div>
     `;
     row.addEventListener('click', () => {
-      searchInput.value = s.OrderNumber;
+      searchInput.value = s.Customer;
       hideSuggestions();
-      executeSearch(s.OrderNumber);
-    });
-    suggestList.appendChild(row);
-  });
-
-  // Render product suggestions
-  matchedProducts.slice(0, 5).forEach(p => {
-    const row = document.createElement('div');
-    row.className = 'px-3 py-2 hover:bg-slate-50 cursor-pointer flex justify-between items-center transition-colors';
-    row.innerHTML = `
-      <div class="font-medium text-slate-700">📦 ${escapeHTML(p.SKU)}</div>
-      <div class="text-[10px] text-slate-400 font-semibold">${escapeHTML(p.Name)}</div>
-    `;
-    row.addEventListener('click', () => {
-      searchInput.value = p.SKU;
-      hideSuggestions();
-      executeSearch(p.SKU);
+      executeSearch(s.Customer);
     });
     suggestList.appendChild(row);
   });
@@ -637,12 +623,12 @@ function createSaleCard(sale) {
   }
 
   card.innerHTML = `
-    <!-- Collapsible Header Summary Row -->
+    <!-- Collapsible Header Summary Row with deep portal links -->
     <div class="card-header flex justify-between items-center cursor-pointer select-none">
       <div class="flex-grow pr-2">
         <h3 class="font-bold text-slate-800 text-[13px] flex items-center space-x-1.5">
-          <span class="text-slate-900">📋 ${escapeHTML(orderNumber)}</span>
-          <span class="text-[10px] text-slate-400 font-normal">| ${escapeHTML(customer)}</span>
+          <a href="https://inventory.dearsystems.com/Sale?ID=${escapeHTML(saleId)}" target="_blank" class="hover:underline text-slate-800 font-bold transition-colors">📋 ${escapeHTML(orderNumber)} ↗</a>
+          <a href="https://inventory.dearsystems.com/Customer?ID=${escapeHTML(sale.CustomerID || '')}" target="_blank" class="text-[10px] text-slate-400 font-normal hover:underline hover:text-sky-600 transition-colors">| ${escapeHTML(customer)} ↗</a>
         </h3>
         <p class="text-slate-400 font-medium text-[9px] mt-0.5">${escapeHTML(orderDate)}</p>
       </div>
@@ -657,7 +643,12 @@ function createSaleCard(sale) {
     <!-- Collapsible Details Panel (Hidden by default) -->
     <div class="card-details hidden space-y-2.5 border-t border-slate-100 pt-2.5 mt-2.5">
       <div class="bg-slate-50 rounded border border-slate-100 p-2 space-y-1 text-[10px]">
-        <div class="flex justify-between"><span class="text-slate-500">Invoice Number:</span> <span class="font-bold text-slate-700">${escapeHTML(invoiceNumber)}</span></div>
+        <div class="flex justify-between">
+          <span class="text-slate-500">Invoice Number:</span> 
+          <span class="font-bold text-slate-700">
+            <a href="https://inventory.dearsystems.com/Sale#Invoice?ID=${escapeHTML(saleId)}" target="_blank" class="hover:underline text-sky-600 font-bold hover:text-sky-800 transition-colors">${escapeHTML(invoiceNumber)} ↗</a>
+          </span>
+        </div>
         <div class="flex justify-between"><span class="text-slate-500">Customer Ref:</span> <span class="font-bold text-slate-700">${escapeHTML(customerReference)}</span></div>
       </div>
 

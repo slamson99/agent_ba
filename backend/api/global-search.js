@@ -121,7 +121,6 @@ module.exports = async function (req, res) {
             const custRes = await fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Customer?ID=${customerId}`, { headers });
             if (custRes.ok) {
               const cData = await custRes.json();
-              // Fix Customer Array Nesting Unpacking from CustomerList array
               customerProfile = cData.CustomerList && cData.CustomerList[0];
             }
           } catch (custErr) {
@@ -179,6 +178,8 @@ module.exports = async function (req, res) {
 
         return {
           ...sale,
+          SaleID: saleId,
+          CustomerID: customerId,
           OrderNumber: sale.OrderNumber || detailData.OrderNumber || 'Unassigned',
           OrderDate: formatDate(detailData.OrderDate || detailData.Created || sale.OrderDate),
           Status: detailData.Status || sale.Status || 'Draft',
