@@ -62,10 +62,10 @@ module.exports = async function (req, res) {
   try {
     const cleanQuery = query.trim();
 
-    // Fire low-weight index calls concurrently to keep it fast
+    // Fire low-weight index calls concurrently (limit=1000 to maximize history)
     const [productsRes, salesRes] = await Promise.allSettled([
       fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Product?Search=${encodeURIComponent(cleanQuery)}`, { headers }),
-      fetch(`https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(cleanQuery)}`, { headers })
+      fetch(`https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(cleanQuery)}&limit=1000`, { headers })
     ]);
 
     let products = [];
@@ -90,8 +90,18 @@ module.exports = async function (req, res) {
       sales = rawSales.filter(s => s.Status && s.Status.toUpperCase() !== 'VOID' && s.Status.toUpperCase() !== 'VOIDED');
     }
 
+    // Pre-Hydration Chronological Sort: Sort the raw list by OrderDate descending across the entire 1000-record dataset
+    sales.sort((a, b) => {
+      const da = a.OrderDate ? new Date(a.OrderDate) : new Date(0);
+      const db = b.OrderDate ? new Date(b.OrderDate) : new Date(0);
+      return db - da; // Newest first
+    });
+
+    // Expand Card Visibility Index to 10 items
+    const slicedSales = sales.slice(0, 10);
+
     // Hydrate Sales concurrently
-    const detailedSales = await Promise.all(sales.slice(0, 5).map(async (sale) => {
+    const detailedSales = await Promise.all(slicedSales.map(async (sale) => {
       try {
         const saleId = sale.SaleID || sale.ID || '';
         const [detailRes, fulRes] = await Promise.all([

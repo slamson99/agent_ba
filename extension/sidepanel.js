@@ -55,6 +55,10 @@ document.addEventListener('DOMContentLoaded', () => {
   } else {
     backendUrlInput.value = backendUrl;
   }
+  // Initialize sorting dropdown to default newest first
+  if (filterSortSelect) {
+    filterSortSelect.value = 'date-desc';
+  }
 });
 
 // Dismiss Auto-suggest dropdown when clicking outside
@@ -270,6 +274,11 @@ async function executeSearch(query) {
   searchTriageBadge.classList.add('hidden');
   paginationControls.classList.add('hidden');
 
+  // Enforce "Date: Newest First" as the default sort when a new search executes
+  if (filterSortSelect) {
+    filterSortSelect.value = 'date-desc';
+  }
+
   const sanitizedUrl = backendUrl.replace(/\/$/, '');
   const searchUrl = `${sanitizedUrl}/api/global-search?query=${encodeURIComponent(query)}`;
 
@@ -312,7 +321,7 @@ if (filterSortSelect) {
 function getCombinedSortedItems() {
   if (!currentResults) return [];
   
-  const sortVal = filterSortSelect ? filterSortSelect.value : 'default';
+  const sortVal = filterSortSelect ? filterSortSelect.value : 'date-desc';
   const queryText = searchInput.value.trim().toLowerCase();
 
   const filteredSales = (currentResults.sales || []).filter(s => {
@@ -388,7 +397,7 @@ function applyFilterAndRender() {
 
   emptyState.classList.add('hidden');
 
-  // Compute pagination parameters
+  // Compute pagination parameters (accept up to 10 minimized cards)
   const totalPages = Math.ceil(totalItems / PAGE_SIZE) || 1;
   if (currentPage > totalPages) currentPage = totalPages;
   if (currentPage < 1) currentPage = 1;
@@ -652,7 +661,7 @@ function createSaleCard(sale) {
         </button>
       </div>
 
-      <button class="copy-summary-btn w-full bg-slate-800 hover:bg-slate-900 text-white border border-transparent rounded py-1.5 px-2 font-semibold tracking-wide flex items-center justify-center space-x-1 transition-colors shadow-sm animate-pulse" data-summary="Order: ${escapeHTML(orderNumber)} | Customer: ${escapeHTML(customer)} | Status: ${escapeHTML(status)} | Tracking: ${escapeHTML(combinedTracking)}">
+      <button class="copy-summary-btn w-full bg-slate-800 hover:bg-slate-900 text-white border border-transparent rounded py-1.5 px-2 font-semibold tracking-wide flex items-center justify-center space-x-1 transition-colors shadow-sm" data-summary="Order: ${escapeHTML(orderNumber)} | Customer: ${escapeHTML(customer)} | Status: ${escapeHTML(status)} | Tracking: ${escapeHTML(combinedTracking)}">
         <span>📋 Copy Quick Summary</span>
       </button>
     </div>
@@ -681,12 +690,12 @@ function createSaleCard(sale) {
       .then(() => {
         const originalText = copyBtn.innerHTML;
         copyBtn.innerHTML = '<span>✅ Copied to Clipboard</span>';
-        copyBtn.classList.remove('bg-slate-800', 'animate-pulse');
+        copyBtn.classList.remove('bg-slate-800');
         copyBtn.classList.add('bg-emerald-600');
         setTimeout(() => {
           copyBtn.innerHTML = originalText;
           copyBtn.classList.remove('bg-emerald-600');
-          copyBtn.classList.add('bg-slate-800', 'animate-pulse');
+          copyBtn.classList.add('bg-slate-800');
         }, 2000);
       })
       .catch(err => {
