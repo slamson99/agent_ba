@@ -115,18 +115,22 @@ module.exports = async function (req, res) {
 
         // Relational Data Hydration: Look up Customer profile using CustomerID
         const customerId = detailData.CustomerID || sale.CustomerID || '';
-        let customerData = {};
+        let customerProfile = null;
         if (customerId) {
           try {
             const custRes = await fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Customer?ID=${customerId}`, { headers });
-            if (custRes.ok) customerData = await custRes.json();
+            if (custRes.ok) {
+              const cData = await custRes.json();
+              // Fix Customer Array Nesting Unpacking from CustomerList array
+              customerProfile = cData.CustomerList && cData.CustomerList[0];
+            }
           } catch (custErr) {
             console.error(`Failed to fetch Customer info for ID ${customerId}:`, custErr);
           }
         }
 
-        const customerDiscount = customerData.Discount !== undefined ? customerData.Discount : (detailData.Discount || 0);
-        const customerAreaCode = customerData.AdditionalAttribute6 || (customerData.AdditionalAttributes && customerData.AdditionalAttributes.AdditionalAttribute6) || 'N/A';
+        const customerDiscount = (customerProfile && customerProfile.Discount !== undefined) ? customerProfile.Discount : (detailData.Discount || 0);
+        const customerAreaCode = (customerProfile && customerProfile.AdditionalAttribute6) || (detailData.AdditionalAttribute6) || 'N/A';
 
         // Run deep recursive tracking scanner
         const trackingList = [];

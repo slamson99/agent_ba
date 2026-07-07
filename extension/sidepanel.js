@@ -303,7 +303,7 @@ async function executeSearch(query) {
     errorMessage.textContent = error.message || "Unable to reach server. Check backend URL configuration.";
     errorBanner.classList.remove('hidden');
   } finally {
-    // Bulletproof Loader Lifecycle
+    // Bulletproof Loader spinner hide
     loader.classList.add('hidden');
   }
 }
@@ -563,7 +563,7 @@ function formatTrackingNumbers(trackingStr) {
   return escapeHTML(trackingStr);
 }
 
-// Generate Sale Card element (Renders collapsed by default)
+// Generate Sale Card element (Renders collapsed by default, zero download buttons)
 function createSaleCard(sale) {
   const saleId = sale.SaleID || sale.ID || '';
   const orderNumber = sale.OrderNumber || 'Unassigned';
@@ -591,14 +591,19 @@ function createSaleCard(sale) {
   const card = document.createElement('div');
   card.className = 'bg-white border border-slate-200 rounded-lg p-3 shadow-sm hover:border-slate-300 transition-colors flex flex-col text-xs';
 
-  // Nest product availability mapping directly inside the sales cards (Stop text overflow, stack vertically)
+  // Nest product availability mapping inside card, sorted alphabetically by SKU
   let linesHtml = '';
   if (sale.OrderLines && sale.OrderLines.length > 0) {
+    // Apply strict alphabetical sort on product SKU
+    const sortedLines = [...sale.OrderLines].sort((a, b) => 
+      (a.SKU || '').toLowerCase().localeCompare((b.SKU || '').toLowerCase())
+    );
+
     linesHtml = `
       <div class="border border-slate-100 rounded p-2 space-y-1 text-[10px] bg-white mt-2.5">
-        <div class="font-semibold text-slate-700 pb-0.5 border-b border-slate-100 uppercase tracking-wider text-[8px]">Ordered Items & Availability</div>
+        <div class="font-semibold text-slate-700 pb-0.5 border-b border-slate-100 uppercase tracking-wider text-[8px]">ORDERED ITEMS</div>
         <div class="divide-y divide-slate-100">
-          ${sale.OrderLines.map(line => {
+          ${sortedLines.map(line => {
             const sku = line.SKU || '';
             const name = line.Name || '';
             const quantity = line.Quantity || 0;
@@ -679,13 +684,6 @@ function createSaleCard(sale) {
 
       <!-- Embedded Order Lines & availability details -->
       ${linesHtml}
-
-      <!-- UI Clean-up: Only Keep Invoice PDF button (Removed Copy Quick Summary button) -->
-      <div class="pt-1">
-        <button class="download-btn invoice w-full shadow-sm bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded py-1.5 px-2 font-semibold tracking-wide flex items-center justify-center space-x-1 transition-colors" data-id="${escapeHTML(saleId)}" data-type="Invoice">
-          <span>📥 Download Invoice PDF</span>
-        </button>
-      </div>
     </div>
   `;
 
@@ -698,17 +696,10 @@ function createSaleCard(sale) {
     toggleIcon.textContent = isHidden ? '▼' : '▲';
   });
 
-  // Attach event listener to download button
-  card.querySelector('.download-btn.invoice').addEventListener('click', async (e) => {
-    const type = e.currentTarget.getAttribute('data-type');
-    const id = e.currentTarget.getAttribute('data-id');
-    await downloadDocument(e.currentTarget, id, type);
-  });
-
   return card;
 }
 
-// Download PDF blob from Backend
+// Download PDF blob from Backend (Retained for system utility, not mapped to card actions)
 async function downloadDocument(button, saleId, type) {
   if (!saleId) {
     showStatusAlert("Missing Sale ID", "danger");
