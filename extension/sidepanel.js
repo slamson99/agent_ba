@@ -86,8 +86,9 @@ if (tabProducts) {
 }
 
 function selectTab(scope) {
-  if (activeScope === scope) return;
-  activeScope = scope;
+  const scopeLower = (scope || '').toLowerCase();
+  if (activeScope === scopeLower) return;
+  activeScope = scopeLower;
   currentPage = 1;
 
   // Instantly toggle active tab visual classes
@@ -644,9 +645,8 @@ function createProductRow(product) {
   const allocated = product.Allocated !== undefined ? product.Allocated : 0;
   const onOrder = product.OnOrder !== undefined ? product.OnOrder : 0;
   
-  // Calculate Stock levels
-  const available = onHand - allocated;
-  const currentStock = available - allocated;
+  // Calculate Stock levels (OnHand - Allocated)
+  const currentStock = onHand - allocated;
 
   mainRow.innerHTML = `
     <td class="px-2.5 py-2 font-semibold text-slate-800 tracking-tight">${escapeHTML(sku)}</td>
@@ -817,7 +817,7 @@ function escapeHTML(str) {
   if (typeof str !== 'string') return '';
   return str
     .replace(/&/g, '&amp;')
-    .replace(/<//g, '&lt;')
+    .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');

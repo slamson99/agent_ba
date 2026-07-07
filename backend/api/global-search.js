@@ -119,10 +119,11 @@ module.exports = async function (req, res) {
           if (detailRes.ok) {
             const productDetails = await detailRes.json();
             
+            // Extract BOM Components if flag is true (traverse BillOfMaterialsProducts or standard lines)
             let bomComponents = [];
-            if (productDetails && (productDetails.BillOfMaterials === true || productDetails.BillOfMaterials === 'true' || productDetails.BOM)) {
+            if (productDetails && (productDetails.BillOfMaterial === true || productDetails.BillOfMaterial === 'true' || productDetails.BillOfMaterials === true || productDetails.BillOfMaterials === 'true' || productDetails.BOM)) {
               const bom = productDetails.BOM || productDetails.BillOfMaterials || {};
-              const lines = bom.Lines || bom.Components || bom.LinesList || [];
+              const lines = productDetails.BillOfMaterialsProducts || bom.Lines || bom.Components || bom.LinesList || [];
               if (Array.isArray(lines)) {
                 bomComponents = lines.map(line => {
                   if (!line) return null;
