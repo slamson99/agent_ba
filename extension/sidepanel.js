@@ -303,7 +303,7 @@ async function executeSearch(query) {
     errorMessage.textContent = error.message || "Unable to reach server. Check backend URL configuration.";
     errorBanner.classList.remove('hidden');
   } finally {
-    // Bulletproof Loader Lifecycle: spinner turns off under all circumstances
+    // Bulletproof Loader Lifecycle
     loader.classList.add('hidden');
   }
 }
@@ -397,7 +397,7 @@ function applyFilterAndRender() {
 
   emptyState.classList.add('hidden');
 
-  // Compute pagination parameters (accept up to 10 minimized cards)
+  // Compute pagination parameters
   const totalPages = Math.ceil(totalItems / PAGE_SIZE) || 1;
   if (currentPage > totalPages) currentPage = totalPages;
   if (currentPage < 1) currentPage = 1;
@@ -537,6 +537,32 @@ function createProductCard(product) {
   return card;
 }
 
+// Tracking links parsing helper (extracts urls and reference numbers cleanly)
+function formatTrackingNumbers(trackingStr) {
+  if (!trackingStr || trackingStr === 'N/A') return 'N/A';
+  
+  const parts = trackingStr.split(',');
+  let trackingCode = '';
+  let trackingUrl = '';
+  
+  for (let part of parts) {
+    part = part.trim();
+    if (part.startsWith('http://') || part.startsWith('https://')) {
+      trackingUrl = part;
+    } else if (part) {
+      trackingCode = part;
+    }
+  }
+  
+  if (trackingCode && trackingUrl) {
+    return `${escapeHTML(trackingCode)} <a href="${escapeHTML(trackingUrl)}" target="_blank" class="text-blue-600 underline ml-1 font-medium">Track Order ↗</a>`;
+  }
+  if (trackingUrl) {
+    return `<a href="${escapeHTML(trackingUrl)}" target="_blank" class="text-blue-600 underline font-medium">Track Order ↗</a>`;
+  }
+  return escapeHTML(trackingStr);
+}
+
 // Generate Sale Card element (Renders collapsed by default)
 function createSaleCard(sale) {
   const saleId = sale.SaleID || sale.ID || '';
@@ -565,7 +591,7 @@ function createSaleCard(sale) {
   const card = document.createElement('div');
   card.className = 'bg-white border border-slate-200 rounded-lg p-3 shadow-sm hover:border-slate-300 transition-colors flex flex-col text-xs';
 
-  // Nest product availability mapping directly inside the sales cards
+  // Nest product availability mapping directly inside the sales cards (Stop text overflow, stack vertically)
   let linesHtml = '';
   if (sale.OrderLines && sale.OrderLines.length > 0) {
     linesHtml = `
@@ -577,7 +603,7 @@ function createSaleCard(sale) {
             const name = line.Name || '';
             const quantity = line.Quantity || 0;
             
-            let availHtml = '<span class="text-slate-400 font-mono">(No local match)</span>';
+            let availHtml = '';
             if (currentResults && currentResults.products) {
               const match = currentResults.products.find(p => (p.SKU || '').toLowerCase() === sku.toLowerCase());
               if (match) {
@@ -588,14 +614,14 @@ function createSaleCard(sale) {
             }
 
             return `
-              <div class="py-1 flex justify-between items-start text-[10px]">
-                <div class="pr-2">
+              <div class="py-2 flex justify-between items-center text-[10px]">
+                <div class="flex-grow pr-3 flex flex-col">
                   <div class="font-bold text-slate-800">${escapeHTML(sku)}</div>
-                  <div class="text-[9px] text-slate-500 truncate max-w-[180px]">${escapeHTML(name)}</div>
+                  <div class="text-[11px] text-slate-500 leading-tight mt-0.5 whitespace-normal break-words">${escapeHTML(name)}</div>
+                  ${availHtml ? `<div class="text-[9px] mt-1">${availHtml}</div>` : ''}
                 </div>
-                <div class="text-right flex flex-col items-end shrink-0">
-                  <div class="font-semibold text-slate-700">Qty: ${quantity}</div>
-                  <div class="text-[9px] mt-0.5">${availHtml}</div>
+                <div class="text-right shrink-0">
+                  <span class="font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded text-[10px]">Qty: ${quantity}</span>
                 </div>
               </div>
             `;
@@ -646,7 +672,7 @@ function createSaleCard(sale) {
         </div>
         <div class="flex justify-between"><span class="text-slate-500">Invoice Due Date:</span> <span class="font-semibold text-slate-700">${escapeHTML(invoiceDueDate)}</span></div>
         <div class="flex justify-between"><span class="text-slate-500">Fulfillment Status:</span> <span class="font-semibold text-slate-700">${escapeHTML(fulfilmentStatus)}</span></div>
-        <div class="flex justify-between"><span class="text-slate-500">Tracking Numbers:</span> <span class="font-semibold text-sky-700 select-all">${escapeHTML(combinedTracking)}</span></div>
+        <div class="flex justify-between"><span class="text-slate-500">Tracking Numbers:</span> <span class="font-semibold text-sky-700 select-all">${formatTrackingNumbers(combinedTracking)}</span></div>
         <div class="flex justify-between"><span class="text-slate-500">Invoice Amount:</span> <span class="font-bold text-slate-800">$${invoiceAmount.toFixed(2)}</span></div>
         <div class="pt-1 border-t border-slate-100 mt-1"><span class="text-slate-500 block pb-0.5">Shipping Notes:</span> <span class="text-slate-600 block italic leading-normal">${escapeHTML(shippingNotes)}</span></div>
       </div>
@@ -654,16 +680,12 @@ function createSaleCard(sale) {
       <!-- Embedded Order Lines & availability details -->
       ${linesHtml}
 
-      <!-- UI Clean-up: Only Keep Invoice PDF button -->
+      <!-- UI Clean-up: Only Keep Invoice PDF button (Removed Copy Quick Summary button) -->
       <div class="pt-1">
         <button class="download-btn invoice w-full shadow-sm bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded py-1.5 px-2 font-semibold tracking-wide flex items-center justify-center space-x-1 transition-colors" data-id="${escapeHTML(saleId)}" data-type="Invoice">
           <span>📥 Download Invoice PDF</span>
         </button>
       </div>
-
-      <button class="copy-summary-btn w-full bg-slate-800 hover:bg-slate-900 text-white border border-transparent rounded py-1.5 px-2 font-semibold tracking-wide flex items-center justify-center space-x-1 transition-colors shadow-sm" data-summary="Order: ${escapeHTML(orderNumber)} | Customer: ${escapeHTML(customer)} | Status: ${escapeHTML(status)} | Tracking: ${escapeHTML(combinedTracking)}">
-        <span>📋 Copy Quick Summary</span>
-      </button>
     </div>
   `;
 
@@ -681,27 +703,6 @@ function createSaleCard(sale) {
     const type = e.currentTarget.getAttribute('data-type');
     const id = e.currentTarget.getAttribute('data-id');
     await downloadDocument(e.currentTarget, id, type);
-  });
-
-  const copyBtn = card.querySelector('.copy-summary-btn');
-  copyBtn.addEventListener('click', () => {
-    const summaryText = copyBtn.getAttribute('data-summary');
-    navigator.clipboard.writeText(summaryText)
-      .then(() => {
-        const originalText = copyBtn.innerHTML;
-        copyBtn.innerHTML = '<span>✅ Copied to Clipboard</span>';
-        copyBtn.classList.remove('bg-slate-800');
-        copyBtn.classList.add('bg-emerald-600');
-        setTimeout(() => {
-          copyBtn.innerHTML = originalText;
-          copyBtn.classList.remove('bg-emerald-600');
-          copyBtn.classList.add('bg-slate-800');
-        }, 2000);
-      })
-      .catch(err => {
-        console.error("Clipboard copy failed:", err);
-        showStatusAlert("Copy failed", "danger");
-      });
   });
 
   return card;

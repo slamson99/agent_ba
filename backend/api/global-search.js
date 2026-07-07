@@ -90,11 +90,11 @@ module.exports = async function (req, res) {
       sales = rawSales.filter(s => s.Status && s.Status.toUpperCase() !== 'VOID' && s.Status.toUpperCase() !== 'VOIDED');
     }
 
-    // Pre-Hydration Chronological Sort: Sort the raw list by OrderDate descending across the entire 1000-record dataset
+    // Pre-Hydration Chronological Sort
     sales.sort((a, b) => {
       const da = a.OrderDate ? new Date(a.OrderDate) : new Date(0);
       const db = b.OrderDate ? new Date(b.OrderDate) : new Date(0);
-      return db - da; // Newest first
+      return db - da;
     });
 
     // Expand Card Visibility Index to 10 items
@@ -113,7 +113,22 @@ module.exports = async function (req, res) {
         if (detailRes.ok) detailData = await detailRes.json();
         if (fulRes.ok) fulData = await fulRes.json();
 
-        // Run deep recursive tracking scanner on returned JSON payloads
+        // Relational Data Hydration: Look up Customer profile using CustomerID
+        const customerId = detailData.CustomerID || sale.CustomerID || '';
+        let customerData = {};
+        if (customerId) {
+          try {
+            const custRes = await fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Customer?ID=${customerId}`, { headers });
+            if (custRes.ok) customerData = await custRes.json();
+          } catch (custErr) {
+            console.error(`Failed to fetch Customer info for ID ${customerId}:`, custErr);
+          }
+        }
+
+        const customerDiscount = customerData.Discount !== undefined ? customerData.Discount : (detailData.Discount || 0);
+        const customerAreaCode = customerData.AdditionalAttribute6 || (customerData.AdditionalAttributes && customerData.AdditionalAttributes.AdditionalAttribute6) || 'N/A';
+
+        // Run deep recursive tracking scanner
         const trackingList = [];
         scanForTrackingNumbers(detailData, trackingList);
         scanForTrackingNumbers(fulData, trackingList);
@@ -158,8 +173,6 @@ module.exports = async function (req, res) {
           }
         }
 
-        const additionalAttribute6 = detailData.AdditionalAttribute6 || (detailData.AdditionalAttributes && detailData.AdditionalAttributes.AdditionalAttribute6) || 'N/A';
-
         return {
           ...sale,
           OrderNumber: sale.OrderNumber || detailData.OrderNumber || 'Unassigned',
@@ -172,9 +185,9 @@ module.exports = async function (req, res) {
           InvoiceAmount: invoiceAmount || 0,
           CustomerReference: detailData.CustomerReference || 'N/A',
           ShippingNotes: shippingNotesList.filter((v, i, a) => a.indexOf(v) === i && v).join('; ') || 'N/A',
-          AreaCode: additionalAttribute6,
+          AreaCode: customerAreaCode,
           SalesRepresentative: detailData.SalesRepresentative || 'N/A',
-          Discount: detailData.Discount || 0,
+          Discount: customerDiscount,
           Email: detailData.Email || 'N/A',
           TrackingNumber: trackingList.length > 0 ? trackingList.join(', ') : 'N/A',
           OrderLines: detailData.Order ? (detailData.Order.Lines || []) : []
