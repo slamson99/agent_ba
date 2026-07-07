@@ -39,10 +39,11 @@ let activeScope = 'sales'; // Default active tab scope
 let currentResults = null; // Full dataset cached in memory
 const PAGE_SIZE = 10;      // Enforce limit of 10 items per page
 let currentPage = 1;
+let searchDebounceTimeout = null;
 
 const filterSortSelect = document.getElementById('filter-sort');
 
-// Missing Relevance logic for default sorting ranking
+// Relevance logic for default sorting ranking
 function getRelevanceScore(name, query) {
   if (!name || !query) return 0;
   const n = name.toLowerCase();
@@ -151,7 +152,7 @@ saveSettingsBtn.addEventListener('click', () => {
   }
 });
 
-// Auto-Suggest Event Binding (Lightweight instant suggestion filtering)
+// Re-Wire search input trigger listener
 searchInput.addEventListener('input', () => {
   const query = searchInput.value.trim();
   
@@ -165,10 +166,19 @@ searchInput.addEventListener('input', () => {
     return;
   }
 
+  // 1. Lightweight auto-suggestions dropdown (Instant local filtering)
   if (query.length > 2) {
     showSuggestions(query);
   } else {
     hideSuggestions();
+  }
+
+  // 2. Active Execution search pipeline: Trigger execution debounced
+  if (query.length > 2) {
+    clearTimeout(searchDebounceTimeout);
+    searchDebounceTimeout = setTimeout(() => {
+      executeSearch(query);
+    }, 400); // 400ms delay to prevent spamming backend
   }
 });
 
@@ -180,11 +190,12 @@ clearSearchBtn.addEventListener('click', () => {
   hideSuggestions();
 });
 
-// Instant Search on Enter key
+// Instant Search on Enter key (Bypasses debounce delay)
 searchInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') {
     const query = searchInput.value.trim();
     if (query.length > 0) {
+      clearTimeout(searchDebounceTimeout);
       hideSuggestions();
       executeSearch(query);
     }
@@ -295,7 +306,7 @@ function resetUI() {
 async function executeSearch(query) {
   if (!query) return;
 
-  // Show Loading state
+  // Force active loader execution (bypasses empty views)
   loader.classList.remove('hidden');
   errorBanner.classList.add('hidden');
   emptyState.classList.add('hidden');
@@ -305,7 +316,7 @@ async function executeSearch(query) {
 
   const sanitizedUrl = backendUrl.replace(/\/$/, '');
   
-  // Pass activeScope parameter so backend ignores other queries entirely
+  // Tab isolation logic parameter mapping
   const searchUrl = `${sanitizedUrl}/api/global-search?query=${encodeURIComponent(query)}&scope=${activeScope}`;
 
   try {
@@ -806,7 +817,7 @@ function escapeHTML(str) {
   if (typeof str !== 'string') return '';
   return str
     .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
+    .replace(/<//g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');

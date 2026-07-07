@@ -45,9 +45,6 @@ module.exports = async function (req, res) {
   const { query, scope } = req.query;
   if (!query) return res.status(400).json({ error: "Missing query parameter" });
 
-  // Case-Insensitive sync lowercase cast
-  const lowercaseQuery = query.toLowerCase();
-
   const headers = {
     'api-auth-accountid': process.env.CIN7_ACCOUNT_ID,
     'api-auth-applicationkey': process.env.CIN7_API_KEY || process.env.CIN7_APPLICATION_KEY,
@@ -55,56 +52,73 @@ module.exports = async function (req, res) {
   };
 
   try {
-    const queryProducts = !scope || scope === 'products';
-    const querySales = !scope || scope === 'sales';
+    // Scope Isolation: ONLY query the endpoints matching the active tab scope
+    const queryProducts = scope === 'products';
+    const querySales = scope === 'sales';
 
-    // Fetch availability and catalog details concurrently
-    const [productsRes, availabilityRes, salesRes] = await Promise.allSettled([
-      queryProducts 
-        ? httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/Product?Search=${encodeURIComponent(lowercaseQuery)}`, headers)
-        : Promise.resolve({ ok: true, json: async () => ({ Products: [] }) }),
-      queryProducts
-        ? httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/ProductAvailability?Search=${encodeURIComponent(lowercaseQuery)}`, headers)
-        : Promise.resolve({ ok: true, json: async () => ({ ProductAvailabilityList: [] }) }),
-      querySales
-        ? httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(lowercaseQuery)}`, headers)
-        : Promise.resolve({ ok: true, json: async () => ({ SaleList: [] }) })
-    ]);
+    const doQueryProducts = !scope ? true : queryProducts;
+    const doQuerySales = !scope ? true : querySales;
+
+    const promises = [];
+    
+    // 1. Products tab endpoints (Query with original query casing to prevent drops)
+    if (doQueryProducts) {
+      promises.push(
+        httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/Product?Search=${encodeURIComponent(query)}`, headers)
+          .then(async (r) => ({ type: 'products', ok: r.ok, json: await r.json() }))
+      );
+      promises.push(
+        httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/ProductAvailability?Search=${encodeURIComponent(query)}`, headers)
+          .then(async (r) => ({ type: 'availability', ok: r.ok, json: await r.json() }))
+      );
+    }
+
+    // 2. Sales tab endpoint (Query with original query casing)
+    if (doQuerySales) {
+      promises.push(
+        httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(query)}`, headers)
+          .then(async (r) => ({ type: 'sales', ok: r.ok, json: await r.json() }))
+      );
+    }
+
+    const results = await Promise.allSettled(promises);
+    
+    let rawProductsList = [];
+    let availabilityList = [];
+    let rawSalesList = [];
+
+    results.forEach(resItem => {
+      if (resItem.status === 'fulfilled' && resItem.value.ok) {
+        const payload = resItem.value.json;
+        if (resItem.value.type === 'products') {
+          rawProductsList = payload.Products || [];
+        } else if (resItem.value.type === 'availability') {
+          availabilityList = payload.ProductAvailabilityList || [];
+        } else if (resItem.value.type === 'sales') {
+          rawSalesList = payload.SaleList || [];
+        }
+      }
+    });
 
     let products = [];
     let sales = [];
-    let priority = 'products';
 
-    // Merge catalog details and availability metrics
-    const availabilityMap = {};
-    if (availabilityRes.status === 'fulfilled' && availabilityRes.value.ok) {
-      try {
-        const availData = await availabilityRes.value.json();
-        const list = availData.ProductAvailabilityList || [];
-        list.forEach(item => {
-          if (item && item.SKU) {
-            availabilityMap[item.SKU.toLowerCase()] = item;
-          }
-        });
-      } catch (e) {
-        console.error("Failed to parse availability map:", e);
-      }
-    }
+    // Process Products
+    if (doQueryProducts && rawProductsList.length > 0) {
+      const availabilityMap = {};
+      availabilityList.forEach(item => {
+        if (item && item.SKU) {
+          availabilityMap[item.SKU.toLowerCase()] = item;
+        }
+      });
 
-    // 1. Fetch detailed product catalog information if there are any results
-    if (queryProducts && productsRes.status === 'fulfilled' && productsRes.value.ok) {
-      const data = await productsRes.value.json();
-      const rawProducts = data.Products || [];
-      
-      // Limit to top 5 detailed fetches to prevent rate limiting
-      const detailedProductsPromises = rawProducts.slice(0, 5).map(async (prod) => {
+      const detailedProductsPromises = rawProductsList.slice(0, 5).map(async (prod) => {
         try {
           const productId = prod.ID || prod.ProductID || '';
           const detailRes = await httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/Product?ID=${productId}`, headers);
           if (detailRes.ok) {
             const productDetails = await detailRes.json();
             
-            // Extract BOM Components if active or true (with defensive empty fallbacks)
             let bomComponents = [];
             if (productDetails && (productDetails.BillOfMaterials === true || productDetails.BillOfMaterials === 'true' || productDetails.BOM)) {
               const bom = productDetails.BOM || productDetails.BillOfMaterials || {};
@@ -121,7 +135,6 @@ module.exports = async function (req, res) {
               }
             }
 
-            // Extract family parameters if present
             let family = null;
             if (productDetails && (productDetails.ProductFamily || productDetails.ProductFamilyID || productDetails.ProductFamilySKU)) {
               family = {
@@ -154,8 +167,7 @@ module.exports = async function (req, res) {
         } catch (err) {
           console.error(`Failed to fetch product details for ${prod.ID || prod.ProductID}:`, err);
         }
-        
-        // Fallback to basic availability data if detailed fetch fails
+
         const skuLower = (prod.SKU || '').toLowerCase();
         const availItem = availabilityMap[skuLower] || {};
         return {
@@ -175,21 +187,16 @@ module.exports = async function (req, res) {
           Family: null
         };
       });
-      
+
       products = await Promise.all(detailedProductsPromises);
     }
 
-    // 2. Fetch detailed sales information if there are any search results
-    if (querySales && salesRes.status === 'fulfilled' && salesRes.value.ok) {
-      const data = await salesRes.value.json();
-      const rawSales = data.SaleList || [];
-      
-      // Limit to top 5 detailed fetches to ensure performance and prevent rate limiting
-      const detailedSalesPromises = rawSales.slice(0, 5).map(async (sale) => {
+    // Process Sales
+    if (doQuerySales && rawSalesList.length > 0) {
+      const detailedSalesPromises = rawSalesList.slice(0, 5).map(async (sale) => {
         try {
           const saleId = sale.SaleID || sale.ID || '';
           
-          // Concurrently fetch Sale Details AND Fulfilment Payload to resolve tracking details
           const [detailRes, fulfilmentRes] = await Promise.allSettled([
             httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/Sale?ID=${saleId}`, headers),
             httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/Sale/Fulfilment?TaskID=${saleId}`, headers)
@@ -198,11 +205,9 @@ module.exports = async function (req, res) {
           if (detailRes.status === 'fulfilled' && detailRes.value.ok) {
             const saleDetails = await detailRes.value.json();
             
-            // Extract tracking & shipping details from both payloads defensively
             let trackingNumbers = [];
             let shippingNotesList = [];
             
-            // Traversal 1: Details payload
             const fulfillments = saleDetails.Fulfillments || saleDetails.Fulfillment || [];
             if (Array.isArray(fulfillments)) {
               fulfillments.forEach(f => {
@@ -223,7 +228,6 @@ module.exports = async function (req, res) {
               });
             }
 
-            // Traversal 2: Hydrated Fulfilment payload (traverse deeply: Fulfilment -> Shipment -> Lines)
             if (fulfilmentRes.status === 'fulfilled' && fulfilmentRes.value.ok) {
               try {
                 const fData = await fulfilmentRes.value.json();
@@ -261,7 +265,6 @@ module.exports = async function (req, res) {
               }
             }
 
-            // Extract invoice & payment details
             const invoices = saleDetails.Invoices || saleDetails.Invoice || [];
             let invoiceNumber = 'N/A';
             let invoiceAmount = 0;
@@ -276,7 +279,6 @@ module.exports = async function (req, res) {
                 invoiceAmount = primaryInvoice.Total || primaryInvoice.InvoiceTotal || 0;
                 invoiceDueDate = formatDate(primaryInvoice.DueDate || primaryInvoice.InvoiceDueDate || primaryInvoice.InvoiceDate);
                 
-                // Evaluate payment status
                 const invStatus = (primaryInvoice.Status || '').toUpperCase();
                 const balanceDue = primaryInvoice.BalanceDue !== undefined 
                   ? primaryInvoice.BalanceDue 
@@ -292,7 +294,6 @@ module.exports = async function (req, res) {
               }
             }
 
-            // Mirror AdditionalAttribute6 from root Sale layout
             const additionalAttribute6 = saleDetails.AdditionalAttribute6 || (saleDetails.AdditionalAttributes && saleDetails.AdditionalAttributes.AdditionalAttribute6) || 'N/A';
 
             return {
@@ -318,8 +319,7 @@ module.exports = async function (req, res) {
         } catch (err) {
           console.error(`Failed to fetch sale details for ${sale.SaleID || sale.ID}:`, err);
         }
-        
-        // Fallback to basic list data if detailed fetch fails
+
         return {
           ID: sale.SaleID || sale.ID,
           OrderNumber: sale.OrderNumber || 'Unassigned',
@@ -340,23 +340,19 @@ module.exports = async function (req, res) {
           ShippingNotes: 'N/A'
         };
       });
-      
+
       sales = await Promise.all(detailedSalesPromises);
     }
 
-    // Voided Filtering Block: Strip out any transactions where Status is Void/Voided
+    // Voided Filtering: Completely strip out Status === 'VOID' or 'Voided'
     sales = sales.filter(s => {
       const status = (s.Status || '').toUpperCase();
       return status !== 'VOID' && status !== 'VOIDED';
     });
 
-    if (scope) {
-      priority = scope;
-    } else if (lowercaseQuery.startsWith('so-') || /^\d+$/.test(lowercaseQuery)) {
-      priority = 'sales';
-    }
+    const priorityVal = scope || (query.toUpperCase().startsWith('SO-') || /^\d+$/.test(query) ? 'sales' : 'products');
 
-    return res.status(200).json({ products, sales, priority });
+    return res.status(200).json({ products, sales, priority: priorityVal });
   } catch (error) {
     return res.status(500).json({ error: error.message || "Cin7 Request Failure" });
   }
