@@ -34,7 +34,6 @@ const saveSettingsBtn = document.getElementById('save-settings-btn');
 // Constants & Overhauled Filtering/Pagination State
 const DEFAULT_BACKEND_URL = 'https://agent-ba.vercel.app';
 let backendUrl = DEFAULT_BACKEND_URL;
-let searchDebounceTimeout = null;
 
 let activeScope = 'sales'; // Default active tab scope
 let currentResults = null; // Full dataset cached in memory
@@ -55,6 +54,14 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   } else {
     backendUrlInput.value = backendUrl;
+  }
+});
+
+// Dismiss Auto-suggest dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  const suggestList = document.getElementById('search-suggest-list');
+  if (suggestList && !searchInput.contains(e.target) && !suggestList.contains(e.target)) {
+    hideSuggestions();
   }
 });
 
@@ -133,7 +140,7 @@ saveSettingsBtn.addEventListener('click', () => {
   }
 });
 
-// Search Input listeners
+// Auto-Suggest Event Binding (Lightweight instant suggestion filtering)
 searchInput.addEventListener('input', () => {
   const query = searchInput.value.trim();
   
@@ -143,14 +150,15 @@ searchInput.addEventListener('input', () => {
   } else {
     clearSearchBtn.classList.add('hidden');
     resetUI();
+    hideSuggestions();
     return;
   }
 
-  // Debounce search requests
-  clearTimeout(searchDebounceTimeout);
-  searchDebounceTimeout = setTimeout(() => {
-    executeSearch(query);
-  }, 500); // 500ms delay
+  if (query.length > 2) {
+    showSuggestions(query);
+  } else {
+    hideSuggestions();
+  }
 });
 
 // Clear search handler
@@ -158,18 +166,104 @@ clearSearchBtn.addEventListener('click', () => {
   searchInput.value = '';
   clearSearchBtn.classList.add('hidden');
   resetUI();
+  hideSuggestions();
 });
 
 // Instant Search on Enter key
 searchInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') {
-    clearTimeout(searchDebounceTimeout);
     const query = searchInput.value.trim();
     if (query.length > 0) {
+      hideSuggestions();
       executeSearch(query);
     }
   }
 });
+
+// Auto-Suggest List Generation
+function getOrCreateSuggestList() {
+  let suggestList = document.getElementById('search-suggest-list');
+  if (!suggestList) {
+    suggestList = document.createElement('div');
+    suggestList.id = 'search-suggest-list';
+    suggestList.className = 'absolute z-50 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto divide-y divide-slate-100 hidden text-xs';
+    searchInput.parentNode.appendChild(suggestList);
+  }
+  return suggestList;
+}
+
+function showSuggestions(query) {
+  const suggestList = getOrCreateSuggestList();
+  suggestList.innerHTML = '';
+  
+  if (!currentResults) {
+    suggestList.classList.add('hidden');
+    return;
+  }
+
+  const qLower = query.toLowerCase();
+  
+  // Instantly filter local cached dataset case-insensitively
+  const matchedSales = (currentResults.sales || []).filter(s => 
+    (s.OrderNumber || '').toLowerCase().includes(qLower) ||
+    (s.Customer || '').toLowerCase().includes(qLower) ||
+    (s.InvoiceNumber || '').toLowerCase().includes(qLower)
+  );
+
+  const matchedProducts = (currentResults.products || []).filter(p => 
+    (p.SKU || '').toLowerCase().includes(qLower) ||
+    (p.Name || '').toLowerCase().includes(qLower) ||
+    (p.Brand || '').toLowerCase().includes(qLower)
+  );
+
+  const totalMatches = matchedSales.length + matchedProducts.length;
+
+  if (totalMatches === 0) {
+    suggestList.classList.add('hidden');
+    return;
+  }
+
+  // Render sales suggestions
+  matchedSales.slice(0, 5).forEach(s => {
+    const row = document.createElement('div');
+    row.className = 'px-3 py-2 hover:bg-slate-50 cursor-pointer flex justify-between items-center transition-colors';
+    row.innerHTML = `
+      <div class="font-medium text-slate-700">📋 ${escapeHTML(s.OrderNumber)}</div>
+      <div class="text-[10px] text-slate-400 font-semibold">${escapeHTML(s.Customer)}</div>
+    `;
+    row.addEventListener('click', () => {
+      searchInput.value = s.OrderNumber;
+      hideSuggestions();
+      executeSearch(s.OrderNumber);
+    });
+    suggestList.appendChild(row);
+  });
+
+  // Render product suggestions
+  matchedProducts.slice(0, 5).forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'px-3 py-2 hover:bg-slate-50 cursor-pointer flex justify-between items-center transition-colors';
+    row.innerHTML = `
+      <div class="font-medium text-slate-700">📦 ${escapeHTML(p.SKU)}</div>
+      <div class="text-[10px] text-slate-400 font-semibold">${escapeHTML(p.Name)}</div>
+    `;
+    row.addEventListener('click', () => {
+      searchInput.value = p.SKU;
+      hideSuggestions();
+      executeSearch(p.SKU);
+    });
+    suggestList.appendChild(row);
+  });
+
+  suggestList.classList.remove('hidden');
+}
+
+function hideSuggestions() {
+  const suggestList = document.getElementById('search-suggest-list');
+  if (suggestList) {
+    suggestList.classList.add('hidden');
+  }
+}
 
 // Reset visual elements
 function resetUI() {
@@ -199,7 +293,7 @@ async function executeSearch(query) {
 
   const sanitizedUrl = backendUrl.replace(/\/$/, '');
   
-  // Optimize execution pipeline: pass activeScope so backend ignores other checks entirely
+  // Pass activeScope parameter so backend ignores other queries entirely
   const searchUrl = `${sanitizedUrl}/api/global-search?query=${encodeURIComponent(query)}&scope=${activeScope}`;
 
   try {
@@ -233,16 +327,6 @@ if (filterSortSelect) {
     currentPage = 1; // Reset to page 1 on filter change
     applyFilterAndRender();
   });
-}
-
-function getRelevanceScore(name, query) {
-  if (!name || !query) return 0;
-  const normName = name.toLowerCase();
-  const normQuery = query.toLowerCase();
-  if (normName === normQuery) return 3; // Exact match
-  if (normName.startsWith(normQuery)) return 2; // Prefix match
-  if (normName.includes(normQuery)) return 1; // Substring match
-  return 0;
 }
 
 function applyFilterAndRender() {
@@ -327,8 +411,14 @@ function renderResults(data) {
 
   const { sales, products } = data;
   
+  // Filter out VOID/VOIDED transactions on the client side for absolute safety
+  const filteredSales = (sales || []).filter(s => {
+    const status = (s.Status || '').toUpperCase();
+    return status !== 'VOID' && status !== 'VOIDED';
+  });
+
   // Isolate current items pool based on active scope
-  const items = activeScope === 'sales' ? (sales || []) : (products || []);
+  const items = activeScope === 'sales' ? filteredSales : (products || []);
   const totalItems = items.length;
 
   if (totalItems === 0) {
@@ -341,7 +431,7 @@ function renderResults(data) {
 
   emptyState.classList.add('hidden');
 
-  // Compute pagination parameters
+  // Compute pagination parameters (strictly 10 slots per frame)
   const totalPages = Math.ceil(totalItems / PAGE_SIZE) || 1;
   if (currentPage > totalPages) currentPage = totalPages;
   if (currentPage < 1) currentPage = 1;
@@ -406,6 +496,10 @@ function createSaleCard(sale) {
   const invoiceAmount = sale.InvoiceAmount !== undefined ? sale.InvoiceAmount : 0;
   const shippingNotes = sale.ShippingNotes || 'N/A';
 
+  // Invoice accounting fields
+  const invoiceDueDate = sale.InvoiceDueDate || 'N/A';
+  const paymentStatus = sale.PaymentStatus || 'UNPAID';
+
   const card = document.createElement('div');
   card.className = 'bg-white border border-slate-200 rounded-lg p-3 shadow-sm hover:border-slate-300 transition-colors flex flex-col text-xs';
 
@@ -427,7 +521,7 @@ function createSaleCard(sale) {
       </div>
     </div>
 
-    <!-- Collapsible Details Panel -->
+    <!-- Collapsible Details Panel (Hidden by default) -->
     <div class="card-details hidden space-y-2.5 border-t border-slate-100 pt-2.5 mt-2.5">
       <div class="bg-slate-50 rounded border border-slate-100 p-2 space-y-1 text-[10px]">
         <div class="flex justify-between"><span class="text-slate-500">Invoice Number:</span> <span class="font-bold text-slate-700">${escapeHTML(invoiceNumber)}</span></div>
@@ -442,8 +536,13 @@ function createSaleCard(sale) {
         <div class="flex justify-between"><span class="text-slate-500">Area Code:</span> <span class="font-medium text-slate-700">${escapeHTML(attribute6)}</span></div>
       </div>
 
+      <!-- Logistics & Billing Panel (Includes Invoice Status and Due Date) -->
       <div class="border border-slate-100 rounded p-2 space-y-1 text-[10px] bg-slate-50/50">
-        <div class="font-semibold text-slate-700 pb-0.5 border-b border-slate-100 uppercase tracking-wider text-[8px]">Logistics & Billing</div>
+        <div class="font-semibold text-slate-700 pb-0.5 border-b border-slate-100 uppercase tracking-wider text-[8px] flex justify-between items-center">
+          <span>Logistics & Billing</span>
+          <span class="font-bold text-[9px]">${paymentStatus === 'PAID' ? '🟩 PAID' : '🟨 UNPAID / PARTIALLY PAID'}</span>
+        </div>
+        <div class="flex justify-between"><span class="text-slate-500">Invoice Due Date:</span> <span class="font-semibold text-slate-700">${escapeHTML(invoiceDueDate)}</span></div>
         <div class="flex justify-between"><span class="text-slate-500">Fulfillment Status:</span> <span class="font-semibold text-slate-700">${escapeHTML(fulfilmentStatus)}</span></div>
         <div class="flex justify-between"><span class="text-slate-500">Tracking Numbers:</span> <span class="font-semibold text-sky-700 select-all">${escapeHTML(combinedTracking)}</span></div>
         <div class="flex justify-between"><span class="text-slate-500">Invoice Amount:</span> <span class="font-bold text-slate-800">$${invoiceAmount.toFixed(2)}</span></div>
@@ -547,6 +646,20 @@ function createProductRow(product) {
   const weight = product.Weight || 0;
   const dimBlock = `Barcode: ${escapeHTML(barcode)} | Dim: ${length}x${width}x${height} | Wt: ${weight}`;
 
+  // Format Product Family details if present
+  let familyHtml = '';
+  if (product.Family) {
+    familyHtml = `
+      <div class="mt-1.5 p-1.5 bg-white border border-slate-100 rounded">
+        <div class="font-bold text-slate-700 text-[8px] uppercase tracking-wider mb-1">Product Family</div>
+        <div class="text-[9px] text-slate-600">
+          <span class="font-medium text-slate-700">Family Name:</span> ${escapeHTML(product.Family.Name || 'N/A')}
+          ${product.Family.SKU ? `<br><span class="font-medium text-slate-700">Family SKU:</span> ${escapeHTML(product.Family.SKU)}` : ''}
+        </div>
+      </div>
+    `;
+  }
+
   // Format BOM components
   let bomHtml = '';
   if (product.BOM && Array.isArray(product.BOM) && product.BOM.length > 0) {
@@ -562,6 +675,7 @@ function createProductRow(product) {
 
   detailRow.innerHTML = `
     <td colspan="3" class="px-2.5 pb-2.5 pt-0.5">
+      <!-- Collapsible Details Panel (Hidden by default) -->
       <div class="card-details hidden flex flex-col space-y-1">
         <div class="flex items-center space-x-3 text-[10px]">
           <span class="font-medium">Current Stock: <strong class="text-sky-700 font-bold">${currentStock}</strong></span>
@@ -571,6 +685,7 @@ function createProductRow(product) {
         <div class="text-[9px] text-slate-400 select-all font-mono leading-none pt-0.5">
           ${escapeHTML(dimBlock)}
         </div>
+        ${familyHtml}
         ${bomHtml}
       </div>
     </td>

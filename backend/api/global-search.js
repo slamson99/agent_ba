@@ -45,6 +45,9 @@ module.exports = async function (req, res) {
   const { query, scope } = req.query;
   if (!query) return res.status(400).json({ error: "Missing query parameter" });
 
+  // Cast incoming query to lowercase for case-insensitive sync matches
+  const lowercaseQuery = query.toLowerCase();
+
   const headers = {
     'api-auth-accountid': process.env.CIN7_ACCOUNT_ID,
     'api-auth-applicationkey': process.env.CIN7_API_KEY || process.env.CIN7_APPLICATION_KEY,
@@ -52,16 +55,19 @@ module.exports = async function (req, res) {
   };
 
   try {
-    // Smart Pipeline: Skip unnecessary list queries depending on the requested scope
     const queryProducts = !scope || scope === 'products';
     const querySales = !scope || scope === 'sales';
 
-    const [productsRes, salesRes] = await Promise.allSettled([
+    // Fetch availability and catalog details concurrently
+    const [productsRes, availabilityRes, salesRes] = await Promise.allSettled([
       queryProducts 
-        ? httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/ProductAvailability?Search=${encodeURIComponent(query)}`, headers)
+        ? httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/Product?Search=${encodeURIComponent(lowercaseQuery)}`, headers)
+        : Promise.resolve({ ok: true, json: async () => ({ Products: [] }) }),
+      queryProducts
+        ? httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/ProductAvailability?Search=${encodeURIComponent(lowercaseQuery)}`, headers)
         : Promise.resolve({ ok: true, json: async () => ({ ProductAvailabilityList: [] }) }),
       querySales
-        ? httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(query)}`, headers)
+        ? httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(lowercaseQuery)}`, headers)
         : Promise.resolve({ ok: true, json: async () => ({ SaleList: [] }) })
     ]);
 
@@ -69,15 +75,31 @@ module.exports = async function (req, res) {
     let sales = [];
     let priority = 'products';
 
+    // Merge catalog details and availability metrics
+    const availabilityMap = {};
+    if (availabilityRes.status === 'fulfilled' && availabilityRes.value.ok) {
+      try {
+        const availData = await availabilityRes.value.json();
+        const list = availData.ProductAvailabilityList || [];
+        list.forEach(item => {
+          if (item.SKU) {
+            availabilityMap[item.SKU.toLowerCase()] = item;
+          }
+        });
+      } catch (e) {
+        console.error("Failed to parse availability map:", e);
+      }
+    }
+
     // 1. Fetch detailed product catalog information if there are any results
     if (queryProducts && productsRes.status === 'fulfilled' && productsRes.value.ok) {
       const data = await productsRes.value.json();
-      const rawProducts = data.ProductAvailabilityList || [];
+      const rawProducts = data.Products || [];
       
       // Limit to top 5 detailed fetches to prevent rate limiting
       const detailedProductsPromises = rawProducts.slice(0, 5).map(async (prod) => {
         try {
-          const productId = prod.ProductID || prod.ID || '';
+          const productId = prod.ID || prod.ProductID || '';
           const detailRes = await httpsGet(`https://inventory.dearsystems.com/ExternalApi/v2/Product?ID=${productId}`, headers);
           if (detailRes.ok) {
             const productDetails = await detailRes.json();
@@ -96,20 +118,34 @@ module.exports = async function (req, res) {
               }
             }
 
+            // Extract family parameters if present
+            let family = null;
+            if (productDetails.ProductFamily || productDetails.ProductFamilyID || productDetails.ProductFamilySKU) {
+              family = {
+                ID: productDetails.ProductFamilyID || '',
+                Name: productDetails.ProductFamily || '',
+                SKU: productDetails.ProductFamilySKU || ''
+              };
+            }
+
+            const skuLower = (prod.SKU || productDetails.SKU || '').toLowerCase();
+            const availItem = availabilityMap[skuLower] || {};
+
             return {
               ID: productId || prod.ID || '',
               SKU: prod.SKU || productDetails.SKU || 'N/A',
               Name: prod.Name || productDetails.Name || 'Unnamed Product',
               Brand: productDetails.Brand || 'N/A',
-              OnHand: prod.OnHand !== undefined ? prod.OnHand : 0,
-              Allocated: prod.Allocated !== undefined ? prod.Allocated : 0,
-              OnOrder: prod.OnOrder !== undefined ? prod.OnOrder : 0,
+              OnHand: availItem.OnHand !== undefined ? availItem.OnHand : 0,
+              Allocated: availItem.Allocated !== undefined ? availItem.Allocated : 0,
+              OnOrder: availItem.OnOrder !== undefined ? availItem.OnOrder : (productDetails.OnOrder !== undefined ? productDetails.OnOrder : 0),
               Barcode: productDetails.Barcode || 'N/A',
               Length: productDetails.Length !== undefined ? productDetails.Length : 0,
               Width: productDetails.Width !== undefined ? productDetails.Width : 0,
               Height: productDetails.Height !== undefined ? productDetails.Height : 0,
               Weight: productDetails.Weight !== undefined ? productDetails.Weight : 0,
-              BOM: bomComponents.length > 0 ? bomComponents : null
+              BOM: bomComponents.length > 0 ? bomComponents : null,
+              Family: family
             };
           }
         } catch (err) {
@@ -117,20 +153,23 @@ module.exports = async function (req, res) {
         }
         
         // Fallback to basic availability data if detailed fetch fails
+        const skuLower = (prod.SKU || '').toLowerCase();
+        const availItem = availabilityMap[skuLower] || {};
         return {
-          ID: prod.ProductID || prod.ID,
+          ID: prod.ID || prod.ProductID,
           SKU: prod.SKU || 'N/A',
           Name: prod.Name || 'Unnamed Product',
           Brand: 'N/A',
-          OnHand: prod.OnHand !== undefined ? prod.OnHand : 0,
-          Allocated: prod.Allocated !== undefined ? prod.Allocated : 0,
-          OnOrder: prod.OnOrder !== undefined ? prod.OnOrder : 0,
+          OnHand: availItem.OnHand !== undefined ? availItem.OnHand : 0,
+          Allocated: availItem.Allocated !== undefined ? availItem.Allocated : 0,
+          OnOrder: availItem.OnOrder !== undefined ? availItem.OnOrder : 0,
           Barcode: 'N/A',
           Length: 0,
           Width: 0,
           Height: 0,
           Weight: 0,
-          BOM: null
+          BOM: null,
+          Family: null
         };
       });
       
@@ -179,7 +218,7 @@ module.exports = async function (req, res) {
               });
             }
 
-            // Traversal 2: Hydrated Fulfilment payload
+            // Traversal 2: Hydrated Fulfilment payload (traverse deeply: Fulfilment -> Shipment -> Lines)
             if (fulfilmentRes.status === 'fulfilled' && fulfilmentRes.value.ok) {
               try {
                 const fData = await fulfilmentRes.value.json();
@@ -187,9 +226,15 @@ module.exports = async function (req, res) {
                 if (Array.isArray(fList)) {
                   fList.forEach(f => {
                     const ship = f.Ship || f.Shipment || {};
-                    if (ship.Lines && Array.isArray(ship.Lines)) {
-                      ship.Lines.forEach(l => {
-                        if (l.TrackingNumber) trackingNumbers.push(l.TrackingNumber);
+                    const lines = ship.Lines || ship.ShipmentLines || [];
+                    if (Array.isArray(lines)) {
+                      lines.forEach(l => {
+                        if (l.TrackingNumber) {
+                          trackingNumbers.push(l.TrackingNumber);
+                        }
+                        if (l.ShipmentStatus) {
+                          trackingNumbers.push(`Status: ${l.ShipmentStatus}`);
+                        }
                       });
                     }
                     if (ship.TrackingNumber) {
@@ -205,16 +250,33 @@ module.exports = async function (req, res) {
               }
             }
 
-            // Extract invoice details
+            // Extract invoice & payment details
             const invoices = saleDetails.Invoices || saleDetails.Invoice || [];
             let invoiceNumber = 'N/A';
             let invoiceAmount = 0;
-            if (Array.isArray(invoices) && invoices.length > 0) {
-              invoiceNumber = invoices[0].InvoiceNumber || 'N/A';
-              invoiceAmount = invoices[0].Total || invoices[0].InvoiceTotal || 0;
-            } else if (invoices && typeof invoices === 'object') {
-              invoiceNumber = invoices.InvoiceNumber || 'N/A';
-              invoiceAmount = invoices.Total || invoices.InvoiceTotal || 0;
+            let invoiceDueDate = 'N/A';
+            let paymentStatus = 'UNPAID';
+
+            const invoiceArr = Array.isArray(invoices) ? invoices : (invoices ? [invoices] : []);
+            if (invoiceArr.length > 0) {
+              const primaryInvoice = invoiceArr[0];
+              invoiceNumber = primaryInvoice.InvoiceNumber || 'N/A';
+              invoiceAmount = primaryInvoice.Total || primaryInvoice.InvoiceTotal || 0;
+              invoiceDueDate = formatDate(primaryInvoice.DueDate || primaryInvoice.InvoiceDueDate || primaryInvoice.InvoiceDate);
+              
+              // Evaluate payment status
+              const invStatus = (primaryInvoice.Status || '').toUpperCase();
+              const balanceDue = primaryInvoice.BalanceDue !== undefined 
+                ? primaryInvoice.BalanceDue 
+                : (invoiceAmount - (primaryInvoice.Paid || 0));
+              
+              if (invStatus === 'PAID' || balanceDue <= 0) {
+                paymentStatus = 'PAID';
+              } else if (invStatus === 'PARTIALLY PAID' || (balanceDue > 0 && balanceDue < invoiceAmount)) {
+                paymentStatus = 'PARTIALLY PAID';
+              } else {
+                paymentStatus = 'UNPAID';
+              }
             }
 
             // Mirror AdditionalAttribute6 from root Sale layout
@@ -233,6 +295,8 @@ module.exports = async function (req, res) {
               InvoiceNumber: invoiceNumber,
               CustomerReference: saleDetails.CustomerReference || saleDetails.Reference || 'N/A',
               InvoiceAmount: invoiceAmount,
+              InvoiceDueDate: invoiceDueDate,
+              PaymentStatus: paymentStatus,
               FulFilmentStatus: saleDetails.FulfillmentStatus || saleDetails.Status || 'N/A',
               CombinedTrackingNumbers: trackingNumbers.filter((v, i, a) => a.indexOf(v) === i && v).join(', ') || 'N/A',
               ShippingNotes: shippingNotesList.filter((v, i, a) => a.indexOf(v) === i && v).join('; ') || 'N/A'
@@ -256,6 +320,8 @@ module.exports = async function (req, res) {
           InvoiceNumber: 'N/A',
           CustomerReference: 'N/A',
           InvoiceAmount: 0,
+          InvoiceDueDate: 'N/A',
+          PaymentStatus: 'UNPAID',
           FulFilmentStatus: sale.Status || 'N/A',
           CombinedTrackingNumbers: 'N/A',
           ShippingNotes: 'N/A'
@@ -273,7 +339,7 @@ module.exports = async function (req, res) {
 
     if (scope) {
       priority = scope;
-    } else if (query.toUpperCase().startsWith('SO-') || /^\d+$/.test(query)) {
+    } else if (lowercaseQuery.startsWith('so-') || /^\d+$/.test(lowercaseQuery)) {
       priority = 'sales';
     }
 
