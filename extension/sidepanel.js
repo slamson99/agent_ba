@@ -21,12 +21,6 @@ const productsEnv = document.getElementById('products-env');
 const salesList = document.getElementById('sales-list');
 const productsList = document.getElementById('products-list');
 
-// Pagination DOM Elements
-const paginationControls = document.getElementById('pagination-controls');
-const prevPageBtn = document.getElementById('prev-page-btn');
-const nextPageBtn = document.getElementById('next-page-btn');
-const pageIndicator = document.getElementById('page-indicator');
-
 // Settings DOM Elements
 const toggleSettingsBtn = document.getElementById('toggle-settings-btn');
 const settingsPanel = document.getElementById('settings-panel');
@@ -41,20 +35,7 @@ let backendUrl = DEFAULT_BACKEND_URL;
 
 let activeTab = 'sales'; // 'sales' or 'products'
 let currentResults = null; // Flat array returned by backend
-const PAGE_SIZE = 10;      // Capped at 10 items per page
-let currentPage = 1;
 let searchDebounceTimeout = null;
-
-// Relevance matching scoring
-function getRelevanceScore(name, query) {
-  if (!name || !query) return 0;
-  const n = name.toLowerCase();
-  const q = query.toLowerCase();
-  if (n === q) return 100;
-  if (n.startsWith(q)) return 80;
-  if (n.includes(q)) return 50;
-  return 0;
-}
 
 // Initialize Settings
 document.addEventListener('DOMContentLoaded', () => {
@@ -90,7 +71,6 @@ function switchTab(tab) {
   // Clear states
   clearTimeout(searchDebounceTimeout);
   currentResults = null;
-  currentPage = 1;
 
   // Clear inputs
   salesInput.value = '';
@@ -128,26 +108,6 @@ function switchTab(tab) {
 
 tabSalesBtn.addEventListener('click', () => switchTab('sales'));
 tabProductsBtn.addEventListener('click', () => switchTab('products'));
-
-// Pagination Controls Handlers
-if (prevPageBtn) {
-  prevPageBtn.addEventListener('click', () => {
-    if (currentPage > 1) {
-      currentPage--;
-      applyFilterAndRender();
-    }
-  });
-}
-if (nextPageBtn) {
-  nextPageBtn.addEventListener('click', () => {
-    const combinedItems = getCombinedSortedItems();
-    const totalPages = Math.ceil(combinedItems.length / PAGE_SIZE) || 1;
-    if (currentPage < totalPages) {
-      currentPage++;
-      applyFilterAndRender();
-    }
-  });
-}
 
 // Toggle Settings Panel
 toggleSettingsBtn.addEventListener('click', () => {
@@ -329,14 +289,12 @@ function resetUI() {
   errorBanner.classList.add('hidden');
   resultsPanel.classList.add('hidden');
   searchTriageBadge.classList.add('hidden');
-  paginationControls.classList.add('hidden');
   emptyState.classList.remove('hidden');
   
   salesList.innerHTML = '';
   productsList.innerHTML = '';
   
   currentResults = null;
-  currentPage = 1;
 }
 
 // Perform API global search call with scope routing and flat array parsing
@@ -348,7 +306,6 @@ async function executeSearch(query) {
   emptyState.classList.add('hidden');
   resultsPanel.classList.add('hidden');
   searchTriageBadge.classList.add('hidden');
-  paginationControls.classList.add('hidden');
 
   // Default sorting dropdown based on active tab
   if (filterSortSelect) {
@@ -372,6 +329,12 @@ async function executeSearch(query) {
 
     const data = await response.json();
     currentResults = data; // Raw flat array payload (sales or products)
+    
+    // Strict Type Checking
+    if (!Array.isArray(currentResults)) {
+      currentResults = [];
+    }
+
     applyFilterAndRender();
 
   } catch (error) {
@@ -388,7 +351,6 @@ async function executeSearch(query) {
 if (filterSortSelect) {
   filterSortSelect.addEventListener('change', () => {
     if (!currentResults) return;
-    currentPage = 1;
     applyFilterAndRender();
   });
 }
@@ -441,6 +403,7 @@ function getCombinedSortedItems() {
   }
 }
 
+// Directly renders the entire returned array to the UI, removing client-side pagination
 function applyFilterAndRender() {
   const combinedItems = getCombinedSortedItems();
   const totalItems = combinedItems.length;
@@ -452,30 +415,14 @@ function applyFilterAndRender() {
 
   emptyState.classList.add('hidden');
 
-  // Compute pagination parameters
-  const totalPages = Math.ceil(totalItems / PAGE_SIZE) || 1;
-  if (currentPage > totalPages) currentPage = totalPages;
-  if (currentPage < 1) currentPage = 1;
-
-  // Extract page items slice
-  const startIndex = (currentPage - 1) * PAGE_SIZE;
-  const pageItems = combinedItems.slice(startIndex, startIndex + PAGE_SIZE);
-
-  pageIndicator.textContent = `Page ${currentPage} of ${totalPages}`;
-  prevPageBtn.disabled = currentPage === 1;
-  nextPageBtn.disabled = currentPage === totalPages;
-  paginationControls.classList.remove('hidden');
-
-  if (pageItems.length > 0) {
-    triageType.textContent = activeTab === 'sales' ? 'Customer Sales' : 'Product Inventory';
-    searchTriageBadge.classList.remove('hidden');
-  }
+  triageType.textContent = activeTab === 'sales' ? 'Customer Sales' : 'Product Inventory';
+  searchTriageBadge.classList.remove('hidden');
 
   // Clear specific active container lists
   salesList.innerHTML = '';
   productsList.innerHTML = '';
 
-  pageItems.forEach(item => {
+  combinedItems.forEach(item => {
     if (item.type === 'sale') {
       const card = createSaleCard(item.data);
       if (card) salesList.appendChild(card);

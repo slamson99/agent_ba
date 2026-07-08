@@ -107,14 +107,14 @@ module.exports = async function (req, res) {
       // Filter out VOID / Voided immediately
       let sales = rawSales.filter(s => !s.Status || (s.Status.toUpperCase() !== 'VOID' && s.Status.toUpperCase() !== 'VOIDED'));
 
-      // Sort full dataset by OrderDate descending (Newest First)
+      // Sort by OrderDate descending (Newest First)
       sales.sort((a, b) => {
         const da = a.OrderDate ? new Date(a.OrderDate) : new Date(0);
         const db = b.OrderDate ? new Date(b.OrderDate) : new Date(0);
         return db - da;
       });
 
-      // Slice top 10 items
+      // Slice to top 10 items
       const slicedSales = sales.slice(0, 10);
 
       // Hydrate Sales details concurrently
@@ -216,35 +216,37 @@ module.exports = async function (req, res) {
         }
       }));
 
-      // Return flat array payload
+      // Return flat JSON array strictly
       return res.status(200).json(detailedSales);
 
     } else if (activeScope === 'products') {
-      // BLOCK B: Product Search Pipeline (with ref/productavailability SKU query)
-      const [productsRes, availRes] = await Promise.allSettled([
-        fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Product?Search=${encodeURIComponent(cleanQuery)}`, { headers }),
-        fetch(`https://inventory.dearsystems.com/ExternalApi/v2/ref/productavailability?Sku=${encodeURIComponent(cleanQuery)}`, { headers })
-      ]);
-
-      let products = [];
-      const availMap = new Map();
-      const jsonPromises = [];
-
-      // Parse Products
-      if (productsRes.status === 'fulfilled' && productsRes.value.ok) {
-        jsonPromises.push(productsRes.value.json().then(pData => {
-          const rawProducts = pData.Products || [];
-          const qLower = cleanQuery.toLowerCase();
-          products = rawProducts.filter(p =>
-            (p.SKU || '').toLowerCase().includes(qLower) ||
-            (p.Name || '').toLowerCase().includes(qLower)
-          );
-        }));
+      // BLOCK B: Product Search Pipeline (Sequential Fetching)
+      const productsRes = await fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Product?Search=${encodeURIComponent(cleanQuery)}`, { headers });
+      if (!productsRes.ok) {
+        throw new Error(`Cin7 Core Product catalog returned status ${productsRes.status}`);
       }
 
-      // Parse Availability from ref/productavailability
-      if (availRes.status === 'fulfilled' && availRes.value.ok) {
-        jsonPromises.push(availRes.value.json().then(data => {
+      const pData = await productsRes.json();
+      const rawProducts = pData.Products || [];
+      const qLower = cleanQuery.toLowerCase();
+
+      // Filter in-memory to SKU or Name containing query case-insensitive
+      const products = rawProducts.filter(p =>
+        (p.SKU || '').toLowerCase().includes(qLower) ||
+        (p.Name || '').toLowerCase().includes(qLower)
+      );
+
+      if (products.length === 0) {
+        return res.status(200).json([]);
+      }
+
+      // Sequential Fetching: Availability requested after catalog products are resolved
+      const availRes = await fetch(`https://inventory.dearsystems.com/ExternalApi/v2/ref/productavailability?Sku=${encodeURIComponent(cleanQuery)}`, { headers });
+      const availMap = new Map();
+
+      if (availRes.ok) {
+        try {
+          const data = await availRes.json();
           let list = [];
           if (Array.isArray(data)) {
             list = data;
@@ -262,12 +264,12 @@ module.exports = async function (req, res) {
               });
             }
           }
-        }).catch(e => console.error("Error parsing ref/productavailability JSON:", e)));
+        } catch (e) {
+          console.error("Error parsing ref/productavailability JSON:", e);
+        }
       }
 
-      await Promise.all(jsonPromises);
-
-      // Map stock to products using direct Available assignment
+      // Map stock to products
       for (const p of products) {
         const skuKey = (p.SKU || '').toLowerCase();
         const stock = availMap.get(skuKey) || { AvailableStock: 0, OnOrder: 0 };
@@ -275,12 +277,12 @@ module.exports = async function (req, res) {
         p.OnOrder = stock.OnOrder;
       }
 
-      // Group variants sharing an active family identity
-      const groupedProducts = [];
-      const familyMap = new Map();
+      // Group variants sharing an active family identity using an object map
+      const familyMap = {};
 
       for (const p of products) {
-        const familyName = p.Family ? p.Family.Name : null;
+        const familyId = (p.Family && p.Family.ID) || (p.Family && p.Family.Name) || p.ID || p.SKU || '';
+        const familyName = (p.Family && p.Family.Name) || p.Name || 'Unnamed Product';
         const brand = p.Brand || 'N/A';
 
         const variant = {
@@ -293,37 +295,39 @@ module.exports = async function (req, res) {
           SaleTaxRule: p.SaleTaxRule || 'N/A'
         };
 
-        if (familyName) {
-          const key = familyName.toLowerCase();
-          if (familyMap.has(key)) {
-            familyMap.get(key).Variants.push(variant);
+        if (p.Family && p.Family.Name) {
+          const key = familyId.toLowerCase();
+          if (familyMap[key]) {
+            familyMap[key].Variants.push(variant);
           } else {
-            const familyObj = {
+            familyMap[key] = {
               isFamily: true,
               FamilyName: familyName,
               Brand: brand,
               Variants: [variant]
             };
-            familyMap.set(key, familyObj);
-            groupedProducts.push(familyObj);
           }
         } else {
-          groupedProducts.push({
+          const key = (p.SKU || p.ID || '').toLowerCase();
+          familyMap[key] = {
             isFamily: false,
             FamilyName: p.Name || 'Unnamed Product',
             Brand: brand,
             Variants: [variant]
-          });
+          };
         }
       }
 
+      // Flatten object map back into a standard array
+      const groupedArray = Object.values(familyMap);
+
       // Sort variants inside each family A-Z by SKU
-      for (const fp of groupedProducts) {
+      for (const fp of groupedArray) {
         fp.Variants.sort((a, b) => (a.SKU || '').localeCompare(b.SKU || ''));
       }
 
-      // Return flat array payload
-      return res.status(200).json(groupedProducts);
+      // Return flat array payload directly
+      return res.status(200).json(groupedArray);
     } else {
       return res.status(400).json({ error: `Invalid scope: ${activeScope}` });
     }
