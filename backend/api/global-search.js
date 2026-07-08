@@ -220,14 +220,14 @@ module.exports = async function (req, res) {
       return res.status(200).json(detailedSales);
 
     } else if (activeScope === 'products') {
-      // BLOCK B: Product Search Pipeline (Evading 429 Rate Limits with Single-Pass Catalog Query)
+      // BLOCK B: Product Search Pipeline (Evading 429 Rate Limits with Single-Pass Catalog Query & Keywords param)
       const [productsRes, availRes] = await Promise.allSettled([
         fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Product?Page=1&Limit=50&Search=${encodeURIComponent(cleanQuery)}`, { headers }),
-        fetch(`https://inventory.dearsystems.com/ExternalApi/v2/ref/productavailability?Search=${encodeURIComponent(cleanQuery)}`, { headers })
+        fetch(`https://inventory.dearsystems.com/ExternalApi/v2/ref/productavailability?Page=1&Limit=100&Keywords=${encodeURIComponent(cleanQuery)}`, { headers })
       ]);
 
       let products = [];
-      const availMap = new Map();
+      let availList = [];
       const jsonPromises = [];
 
       // Parse Products
@@ -242,7 +242,7 @@ module.exports = async function (req, res) {
         }));
       }
 
-      // Parse Availability (Single global lookup)
+      // Parse Availability (Single global lookup with Keywords parameter)
       if (availRes.status === 'fulfilled' && availRes.value.ok) {
         jsonPromises.push(availRes.value.json().then(data => {
           let list = [];
@@ -253,33 +253,24 @@ module.exports = async function (req, res) {
           } else if (data && data.ProductAvailability) {
             list = data.ProductAvailability;
           }
-          
-          for (const item of list) {
-            if (item && item.SKU) {
-              availMap.set(item.SKU.toLowerCase(), {
-                AvailableStock: item.Available !== undefined ? item.Available : 0,
-                OnOrder: item.OnOrder !== undefined ? item.OnOrder : 0
-              });
-            }
-          }
+          availList = list;
         }).catch(e => console.error("Error parsing ref/productavailability JSON:", e)));
       }
 
       await Promise.all(jsonPromises);
 
-      // Construct flat list of individual products without family groupings
+      // Loop through catalog results and use in-memory .find() match to stitch records
       const flatProductsArray = [];
 
       for (const p of products) {
-        const skuKey = (p.SKU || '').toLowerCase();
-        const stock = availMap.get(skuKey) || { AvailableStock: 0, OnOrder: 0 };
+        const matchingAvail = availList.find(a => a && a.SKU && a.SKU.toLowerCase() === (p.SKU || '').toLowerCase());
 
         flatProductsArray.push({
           SKU: p.SKU || 'N/A',
           Name: p.Name || 'Unnamed Product',
           Brand: p.Brand || 'N/A',
-          AvailableStock: stock.AvailableStock,
-          OnOrder: stock.OnOrder,
+          AvailableStock: (matchingAvail && matchingAvail.Available !== undefined) ? matchingAvail.Available : 0,
+          OnOrder: (matchingAvail && matchingAvail.OnOrder !== undefined) ? matchingAvail.OnOrder : 0,
           PriceTier1: p.PriceTier1 !== undefined ? p.PriceTier1 : 0,
           PriceTier5: p.PriceTier5 !== undefined ? p.PriceTier5 : 0,
           SaleTaxRule: p.SaleTaxRule || 'N/A'
