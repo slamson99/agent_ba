@@ -65,7 +65,37 @@ module.exports = async function (req, res) {
   try {
     if (activeScope === 'sales') {
       // BLOCK A: Customer Sales Search Pipeline
-      const saleListUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(cleanQuery)}&limit=1000`;
+      let saleListUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(cleanQuery)}&limit=1000`;
+      
+      // Email Search Strategy: If email, fetch resolved CustomerID first
+      if (cleanQuery.includes('@')) {
+        let customerId = '';
+        try {
+          const custRes = await fetch(`https://inventory.dearsystems.com/ExternalApi/v2/customer?ContactFilter=${encodeURIComponent(cleanQuery)}`, { headers });
+          if (custRes.ok) {
+            const custData = await custRes.json();
+            if (Array.isArray(custData)) {
+              customerId = custData[0] && custData[0].ID;
+            } else if (custData.CustomerList && custData.CustomerList.length > 0) {
+              customerId = custData.CustomerList[0].ID;
+            } else if (custData.Customers && custData.Customers.length > 0) {
+              customerId = custData.Customers[0].ID;
+            } else if (custData.ID) {
+              customerId = custData.ID;
+            }
+          }
+        } catch (err) {
+          console.error("Failed to query customer by ContactFilter:", err);
+        }
+
+        if (customerId) {
+          saleListUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?CustomerID=${encodeURIComponent(customerId)}&limit=1000`;
+        } else {
+          // No customer found for email
+          return res.status(200).json([]);
+        }
+      }
+
       const response = await fetch(saleListUrl, { headers });
       if (!response.ok) {
         throw new Error(`Cin7 Core SaleList returned status ${response.status}`);
@@ -186,7 +216,8 @@ module.exports = async function (req, res) {
         }
       }));
 
-      return res.status(200).json({ sales: detailedSales, products: [], priorityContext: 'sales' });
+      // Return flat array payload
+      return res.status(200).json(detailedSales);
 
     } else if (activeScope === 'products') {
       // BLOCK B: Product Search Pipeline
@@ -298,7 +329,8 @@ module.exports = async function (req, res) {
         fp.Variants.sort((a, b) => (a.SKU || '').localeCompare(b.SKU || ''));
       }
 
-      return res.status(200).json({ products: groupedProducts, sales: [], priorityContext: 'product' });
+      // Return flat array payload
+      return res.status(200).json(groupedProducts);
     } else {
       return res.status(400).json({ error: `Invalid scope: ${activeScope}` });
     }

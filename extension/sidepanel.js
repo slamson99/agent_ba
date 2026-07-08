@@ -40,7 +40,7 @@ const DEFAULT_BACKEND_URL = 'https://agent-ba.vercel.app';
 let backendUrl = DEFAULT_BACKEND_URL;
 
 let activeTab = 'sales'; // 'sales' or 'products'
-let currentResults = null; // Contains current scope's dataset
+let currentResults = null; // Flat array returned by backend
 const PAGE_SIZE = 10;      // Capped at 10 items per page
 let currentPage = 1;
 let searchDebounceTimeout = null;
@@ -272,13 +272,13 @@ function showSuggestions(query) {
   const suggestList = getOrCreateSuggestList();
   suggestList.innerHTML = '';
   
-  if (!currentResults || activeTab !== 'sales') {
+  if (!Array.isArray(currentResults) || activeTab !== 'sales') {
     suggestList.classList.add('hidden');
     return;
   }
 
   const qLower = query.toLowerCase();
-  const matchedSales = (currentResults.sales || []).filter(s => 
+  const matchedSales = currentResults.filter(s => 
     (s.Customer || '').toLowerCase().includes(qLower)
   );
 
@@ -339,7 +339,7 @@ function resetUI() {
   currentPage = 1;
 }
 
-// Perform API global search call with scope routing
+// Perform API global search call with scope routing and flat array parsing
 async function executeSearch(query) {
   if (!query) return;
 
@@ -371,7 +371,7 @@ async function executeSearch(query) {
     }
 
     const data = await response.json();
-    currentResults = data;
+    currentResults = data; // Raw flat array payload (sales or products)
     applyFilterAndRender();
 
   } catch (error) {
@@ -379,7 +379,7 @@ async function executeSearch(query) {
     errorMessage.textContent = error.message || "Unable to reach server. Check backend URL configuration.";
     errorBanner.classList.remove('hidden');
   } finally {
-    // Loader spinner guaranteed hide
+    // Loader spinner guaranteed hide inside finally block
     loader.classList.add('hidden');
   }
 }
@@ -393,17 +393,14 @@ if (filterSortSelect) {
   });
 }
 
-// Combine and sort active scope's datasets
+// Combine and sort active scope's flat array datasets
 function getCombinedSortedItems() {
-  if (!currentResults) return [];
+  if (!Array.isArray(currentResults)) return [];
   
   const sortVal = filterSortSelect ? filterSortSelect.value : 'date-desc';
-  const queryText = activeTab === 'sales' 
-    ? salesInput.value.trim().toLowerCase() 
-    : productsInput.value.trim().toLowerCase();
 
   if (activeTab === 'sales') {
-    const filteredSales = (currentResults.sales || []).filter(s => {
+    const filteredSales = currentResults.filter(s => {
       const status = (s.Status || '').toUpperCase();
       return status !== 'VOID' && status !== 'VOIDED';
     });
@@ -431,9 +428,8 @@ function getCombinedSortedItems() {
     return combinedItems;
 
   } else {
-    // products
-    const productsList = currentResults.products || [];
-    const combinedItems = productsList.map(p => ({ type: 'product', data: p }));
+    // products (grouped families flat array)
+    const combinedItems = currentResults.map(p => ({ type: 'product', data: p }));
 
     // Sort Products
     if (sortVal === 'default' || sortVal === 'name-az') {
@@ -475,23 +471,27 @@ function applyFilterAndRender() {
     searchTriageBadge.classList.remove('hidden');
   }
 
-  // Clear specific active container list
+  // Clear specific active container lists
   salesList.innerHTML = '';
   productsList.innerHTML = '';
 
   pageItems.forEach(item => {
     if (item.type === 'sale') {
-      salesList.appendChild(createSaleCard(item.data));
+      const card = createSaleCard(item.data);
+      if (card) salesList.appendChild(card);
     } else {
-      productsList.appendChild(createProductCard(item.data));
+      const card = createProductCard(item.data);
+      if (card) productsList.appendChild(card);
     }
   });
 
   resultsPanel.classList.remove('hidden');
 }
 
-// Generate Grouped Product Family Card element (collapsible)
+// Generate Grouped Product Family Card element (collapsible with absolute check safeguards)
 function createProductCard(product) {
+  if (!product || !product.Variants) return null;
+
   const familyName = product.FamilyName || 'Unnamed Family';
   const brand = product.Brand || 'N/A';
   const variants = product.Variants || [];
@@ -501,6 +501,7 @@ function createProductCard(product) {
 
   // Build variant grid rows HTML (sorted alphabetically by SKU in backend)
   const variantsHtml = variants.map(v => {
+    if (!v) return '';
     const availStock = (v.OnHand || 0) - (v.Allocated || 0);
     const onOrder = v.OnOrder || 0;
     const wsPrice = (v.PriceTier1 || 0).toFixed(2);
@@ -597,8 +598,10 @@ function formatTrackingNumbers(trackingStr) {
   return escapeHTML(trackingStr);
 }
 
-// Generate Sale Card element (Renders collapsed by default, zero copy/download buttons)
+// Generate Sale Card element (Renders collapsed by default, zero copy/download buttons, absolute check safeguards)
 function createSaleCard(sale) {
+  if (!sale) return null;
+
   const saleId = sale.SaleID || sale.ID || '';
   const orderNumber = sale.OrderNumber || 'Unassigned';
   const status = sale.Status || 'Draft';
@@ -625,10 +628,9 @@ function createSaleCard(sale) {
   const card = document.createElement('div');
   card.className = 'bg-white border border-slate-200 rounded-lg p-3 shadow-sm hover:border-slate-300 transition-colors flex flex-col text-xs';
 
-  // Nest product availability mapping inside card, sorted alphabetically by SKU
+  // Nest product list inside card, sorted alphabetically by SKU
   let linesHtml = '';
   if (sale.OrderLines && sale.OrderLines.length > 0) {
-    // Apply strict alphabetical sort on product SKU
     const sortedLines = [...sale.OrderLines].sort((a, b) => 
       (a.SKU || '').toLowerCase().localeCompare((b.SKU || '').toLowerCase())
     );
@@ -638,34 +640,16 @@ function createSaleCard(sale) {
         <div class="font-semibold text-slate-700 pb-0.5 border-b border-slate-100 uppercase tracking-wider text-[8px]">ORDERED ITEMS</div>
         <div class="divide-y divide-slate-100">
           ${sortedLines.map(line => {
+            if (!line) return '';
             const sku = line.SKU || '';
             const name = line.Name || '';
             const quantity = line.Quantity || 0;
-            
-            let availHtml = '';
-            if (currentResults && currentResults.products) {
-              // Find matching variant SKU within grouped families
-              let match = null;
-              for (const family of currentResults.products) {
-                const found = (family.Variants || []).find(v => (v.SKU || '').toLowerCase() === sku.toLowerCase());
-                if (found) {
-                  match = found;
-                  break;
-                }
-              }
-              if (match) {
-                const stock = (match.OnHand || 0) - (match.Allocated || 0);
-                const orderQty = match.OnOrder || 0;
-                availHtml = `<span class="text-emerald-700 font-bold">Avail: ${stock}</span> <span class="text-slate-300">|</span> <span class="text-slate-600">OnOrder: ${orderQty}</span>`;
-              }
-            }
 
             return `
               <div class="py-2 flex justify-between items-center text-[10px]">
                 <div class="flex-grow pr-3 flex flex-col">
                   <div class="font-bold text-slate-800">${escapeHTML(sku)}</div>
                   <div class="text-[11px] text-slate-500 leading-tight mt-0.5 whitespace-normal break-words">${escapeHTML(name)}</div>
-                  ${availHtml ? `<div class="text-[9px] mt-1">${availHtml}</div>` : ''}
                 </div>
                 <div class="text-right shrink-0">
                   <span class="font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded text-[10px]">Qty: ${quantity}</span>
