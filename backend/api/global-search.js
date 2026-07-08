@@ -11,6 +11,12 @@ function formatDate(dateStr) {
   }
 }
 
+// Tokenization Helper: splits string into lowercase individual words
+function tokenize(queryStr) {
+  if (!queryStr) return [];
+  return queryStr.toLowerCase().split(/\s+/).filter(token => token.length > 0);
+}
+
 // Deep recursive key scanner for tracking numbers
 function scanForTrackingNumbers(obj, trackingList = []) {
   if (!obj || typeof obj !== 'object') return trackingList;
@@ -55,6 +61,7 @@ module.exports = async function (req, res) {
 
   const activeScope = scope || 'sales';
   const cleanQuery = query.trim();
+  const tokens = tokenize(cleanQuery);
 
   const headers = {
     'api-auth-accountid': process.env.CIN7_ACCOUNT_ID,
@@ -65,7 +72,8 @@ module.exports = async function (req, res) {
   try {
     if (activeScope === 'sales') {
       // BLOCK A: Customer Sales Search Pipeline (Maximized window using &limit=1000)
-      let saleListUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(cleanQuery)}&limit=1000`;
+      const mainKeyword = tokens[0] || cleanQuery;
+      let saleListUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(mainKeyword)}&limit=1000`;
       
       // Email Search Strategy: If email, fetch resolved CustomerID first
       if (cleanQuery.includes('@')) {
@@ -104,10 +112,26 @@ module.exports = async function (req, res) {
       const sData = await response.json();
       const rawSales = sData.SaleList || [];
 
-      // Filter out VOID / Voided immediately
-      let sales = rawSales.filter(s => !s.Status || (s.Status.toUpperCase() !== 'VOID' && s.Status.toUpperCase() !== 'VOIDED'));
+      // Filter: remove VOID/Voided and enforce Order-Independent Multi-Word Matching
+      let sales = rawSales.filter(s => {
+        if (s.Status && (s.Status.toUpperCase() === 'VOID' || s.Status.toUpperCase() === 'VOIDED')) {
+          return false;
+        }
 
-      // Sort by OrderDate descending (Newest First) across the entire 1000-item array
+        const customer = (s.Customer || '').toLowerCase();
+        const invoiceNumber = (s.InvoiceNumber || '').toLowerCase();
+        const orderNumber = (s.OrderNumber || s.SaleOrderNumber || '').toLowerCase();
+        const customerRef = (s.CustomerReference || '').toLowerCase();
+
+        return tokens.every(token =>
+          customer.includes(token) ||
+          invoiceNumber.includes(token) ||
+          orderNumber.includes(token) ||
+          customerRef.includes(token)
+        );
+      });
+
+      // Sort by OrderDate descending (Newest First) across the entire matched array
       sales.sort((a, b) => {
         const da = a.OrderDate ? new Date(a.OrderDate) : new Date(0);
         const db = b.OrderDate ? new Date(b.OrderDate) : new Date(0);
@@ -224,10 +248,11 @@ module.exports = async function (req, res) {
       return res.status(200).json(fullSortedSales);
 
     } else if (activeScope === 'products') {
-      // BLOCK B: Product Search Pipeline (Global SKU queries to bypass Page-limited lists)
+      // BLOCK B: Product Search Pipeline (Order-Independent Multi-Word Search Engine)
+      const mainKeyword = tokens[0] || cleanQuery;
       const [productsRes, availRes] = await Promise.allSettled([
-        fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Product?Sku=${encodeURIComponent(cleanQuery)}`, { headers }),
-        fetch(`https://inventory.dearsystems.com/ExternalApi/v2/ref/productavailability?Sku=${encodeURIComponent(cleanQuery)}`, { headers })
+        fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Product?Sku=${encodeURIComponent(mainKeyword)}`, { headers }),
+        fetch(`https://inventory.dearsystems.com/ExternalApi/v2/ref/productavailability?Sku=${encodeURIComponent(mainKeyword)}`, { headers })
       ]);
 
       let products = [];
@@ -238,12 +263,13 @@ module.exports = async function (req, res) {
       if (productsRes.status === 'fulfilled' && productsRes.value.ok) {
         jsonPromises.push(productsRes.value.json().then(pData => {
           const rawProducts = pData.Products || (pData.ID || pData.SKU ? [pData] : []);
-          const qLower = cleanQuery.toLowerCase();
-          products = rawProducts.filter(p =>
-            (p.SKU || '').toLowerCase() === qLower ||
-            (p.SKU || '').toLowerCase().includes(qLower) ||
-            (p.Name || '').toLowerCase().includes(qLower)
-          );
+          
+          // Order-Independent Catalog filter: SKU or Name must contain every single token
+          products = rawProducts.filter(p => {
+            const sku = (p.SKU || '').toLowerCase();
+            const name = (p.Name || '').toLowerCase();
+            return tokens.every(token => sku.includes(token) || name.includes(token));
+          });
         }));
       }
 
