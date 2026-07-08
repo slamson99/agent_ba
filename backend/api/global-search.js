@@ -105,7 +105,7 @@ module.exports = async function (req, res) {
       const rawSales = sData.SaleList || [];
 
       // Filter out VOID / Voided immediately
-      let sales = rawSales.filter(s => s.Status && s.Status.toUpperCase() !== 'VOID' && s.Status.toUpperCase() !== 'VOIDED');
+      let sales = rawSales.filter(s => !s.Status || (s.Status.toUpperCase() !== 'VOID' && s.Status.toUpperCase() !== 'VOIDED'));
 
       // Sort full dataset by OrderDate descending (Newest First)
       sales.sort((a, b) => {
@@ -245,11 +245,17 @@ module.exports = async function (req, res) {
       // Parse Availability from ref/productavailability
       if (availRes.status === 'fulfilled' && availRes.value.ok) {
         jsonPromises.push(availRes.value.json().then(data => {
-          const list = data.ProductAvailabilityList || data || [];
-          const arrayList = Array.isArray(list) ? list : (list.ProductAvailabilityList || []);
-          const targetList = Array.isArray(arrayList) ? arrayList : [];
-          for (const item of targetList) {
-            if (item.SKU) {
+          let list = [];
+          if (Array.isArray(data)) {
+            list = data;
+          } else if (data && data.ProductAvailabilityList) {
+            list = data.ProductAvailabilityList;
+          } else if (data && data.ProductAvailability) {
+            list = data.ProductAvailability;
+          }
+          
+          for (const item of list) {
+            if (item && item.SKU) {
               availMap.set(item.SKU.toLowerCase(), {
                 AvailableStock: item.Available !== undefined ? item.Available : 0,
                 OnOrder: item.OnOrder !== undefined ? item.OnOrder : 0

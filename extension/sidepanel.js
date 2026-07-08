@@ -601,6 +601,7 @@ function formatTrackingNumbers(trackingStr) {
 }
 
 // Generate Sale Card element (Renders collapsed by default, zero copy/download buttons, absolute check safeguards)
+// Uses strict tilde-separated single-page-app hashes for internal routing
 function createSaleCard(sale) {
   if (!sale) return null;
 
