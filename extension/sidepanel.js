@@ -1,6 +1,9 @@
 // DOM Elements
-const searchInput = document.getElementById('global-search-input');
-const clearSearchBtn = document.getElementById('clear-search-btn');
+const salesInput = document.getElementById('sales-search-input');
+const productsInput = document.getElementById('products-search-input');
+const clearSalesBtn = document.getElementById('clear-sales-btn');
+const clearProductsBtn = document.getElementById('clear-products-btn');
+
 const loader = document.getElementById('loader');
 const errorBanner = document.getElementById('error-banner');
 const errorMessage = document.getElementById('error-message');
@@ -8,6 +11,15 @@ const emptyState = document.getElementById('empty-state');
 const resultsPanel = document.getElementById('results-panel');
 const searchTriageBadge = document.getElementById('search-triage-badge');
 const triageType = document.getElementById('triage-type');
+
+// Tab Switching DOM Elements
+const tabSalesBtn = document.getElementById('tab-sales-btn');
+const tabProductsBtn = document.getElementById('tab-products-btn');
+const salesEnv = document.getElementById('sales-env');
+const productsEnv = document.getElementById('products-env');
+
+const salesList = document.getElementById('sales-list');
+const productsList = document.getElementById('products-list');
 
 // Pagination DOM Elements
 const paginationControls = document.getElementById('pagination-controls');
@@ -27,8 +39,9 @@ const filterSortSelect = document.getElementById('filter-sort');
 const DEFAULT_BACKEND_URL = 'https://agent-ba.vercel.app';
 let backendUrl = DEFAULT_BACKEND_URL;
 
-let currentResults = null; // Full unified dataset cached in memory
-const PAGE_SIZE = 10;      // Strictly 10 slots per page
+let activeTab = 'sales'; // 'sales' or 'products'
+let currentResults = null; // Contains current scope's dataset
+const PAGE_SIZE = 10;      // Capped at 10 items per page
 let currentPage = 1;
 let searchDebounceTimeout = null;
 
@@ -64,10 +77,57 @@ document.addEventListener('DOMContentLoaded', () => {
 // Dismiss Auto-suggest dropdown when clicking outside
 document.addEventListener('click', (e) => {
   const suggestList = document.getElementById('search-suggest-list');
-  if (suggestList && !searchInput.contains(e.target) && !suggestList.contains(e.target)) {
+  if (suggestList && !salesInput.contains(e.target) && !suggestList.contains(e.target)) {
     hideSuggestions();
   }
 });
+
+// Tab Switching Logic
+function switchTab(tab) {
+  if (activeTab === tab) return;
+  activeTab = tab;
+
+  // Clear states
+  clearTimeout(searchDebounceTimeout);
+  currentResults = null;
+  currentPage = 1;
+
+  // Clear inputs
+  salesInput.value = '';
+  productsInput.value = '';
+  clearSalesBtn.classList.add('hidden');
+  clearProductsBtn.classList.add('hidden');
+
+  hideSuggestions();
+  resetUI();
+
+  if (activeTab === 'sales') {
+    // Style tabs
+    tabSalesBtn.className = "flex-1 py-3 text-center text-xs font-bold border-b-2 border-sky-500 text-sky-600 focus:outline-none transition-all flex items-center justify-center space-x-1";
+    tabProductsBtn.className = "flex-1 py-3 text-center text-xs font-semibold border-b-2 border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 focus:outline-none transition-all flex items-center justify-center space-x-1";
+    
+    // Toggle environments
+    salesEnv.classList.remove('hidden');
+    productsEnv.classList.add('hidden');
+
+    salesList.classList.remove('hidden');
+    productsList.classList.add('hidden');
+  } else {
+    // Style tabs
+    tabProductsBtn.className = "flex-1 py-3 text-center text-xs font-bold border-b-2 border-sky-500 text-sky-600 focus:outline-none transition-all flex items-center justify-center space-x-1";
+    tabSalesBtn.className = "flex-1 py-3 text-center text-xs font-semibold border-b-2 border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 focus:outline-none transition-all flex items-center justify-center space-x-1";
+    
+    // Toggle environments
+    productsEnv.classList.remove('hidden');
+    salesEnv.classList.add('hidden');
+
+    productsList.classList.remove('hidden');
+    salesList.classList.add('hidden');
+  }
+}
+
+tabSalesBtn.addEventListener('click', () => switchTab('sales'));
+tabProductsBtn.addEventListener('click', () => switchTab('products'));
 
 // Pagination Controls Handlers
 if (prevPageBtn) {
@@ -113,27 +173,26 @@ saveSettingsBtn.addEventListener('click', () => {
   }
 });
 
-// Search input trigger listener with debouncing
-searchInput.addEventListener('input', () => {
-  const query = searchInput.value.trim();
+// Customer Sales Input Trigger
+salesInput.addEventListener('input', () => {
+  const query = salesInput.value.trim();
   
   if (query.length > 0) {
-    clearSearchBtn.classList.remove('hidden');
+    clearSalesBtn.classList.remove('hidden');
   } else {
-    clearSearchBtn.classList.add('hidden');
+    clearSalesBtn.classList.add('hidden');
     resetUI();
     hideSuggestions();
     return;
   }
 
-  // 1. Lightweight suggestions overlay (in-memory)
+  // Auto-Suggest on Customer Name strings
   if (query.length > 2) {
     showSuggestions(query);
   } else {
     hideSuggestions();
   }
 
-  // 2. Active Search Pipeline: Trigger execution debounced
   if (query.length > 2) {
     clearTimeout(searchDebounceTimeout);
     searchDebounceTimeout = setTimeout(() => {
@@ -142,24 +201,58 @@ searchInput.addEventListener('input', () => {
   }
 });
 
-// Clear search handler
-clearSearchBtn.addEventListener('click', () => {
-  searchInput.value = '';
-  clearSearchBtn.classList.add('hidden');
-  resetUI();
-  hideSuggestions();
-});
-
-// Instant Search on Enter key
-searchInput.addEventListener('keydown', (event) => {
+salesInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') {
-    const query = searchInput.value.trim();
+    const query = salesInput.value.trim();
     if (query.length > 0) {
       clearTimeout(searchDebounceTimeout);
       hideSuggestions();
       executeSearch(query);
     }
   }
+});
+
+clearSalesBtn.addEventListener('click', () => {
+  salesInput.value = '';
+  clearSalesBtn.classList.add('hidden');
+  resetUI();
+  hideSuggestions();
+});
+
+// Products Input Trigger
+productsInput.addEventListener('input', () => {
+  const query = productsInput.value.trim();
+  
+  if (query.length > 0) {
+    clearProductsBtn.classList.remove('hidden');
+  } else {
+    clearProductsBtn.classList.add('hidden');
+    resetUI();
+    return;
+  }
+
+  if (query.length > 2) {
+    clearTimeout(searchDebounceTimeout);
+    searchDebounceTimeout = setTimeout(() => {
+      executeSearch(query);
+    }, 400);
+  }
+});
+
+productsInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    const query = productsInput.value.trim();
+    if (query.length > 0) {
+      clearTimeout(searchDebounceTimeout);
+      executeSearch(query);
+    }
+  }
+});
+
+clearProductsBtn.addEventListener('click', () => {
+  productsInput.value = '';
+  clearProductsBtn.classList.add('hidden');
+  resetUI();
 });
 
 // Auto-Suggest List Generation
@@ -169,7 +262,7 @@ function getOrCreateSuggestList() {
     suggestList = document.createElement('div');
     suggestList.id = 'search-suggest-list';
     suggestList.className = 'absolute z-50 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto divide-y divide-slate-100 hidden text-xs';
-    searchInput.parentNode.appendChild(suggestList);
+    salesInput.parentNode.appendChild(suggestList);
   }
   return suggestList;
 }
@@ -179,19 +272,16 @@ function showSuggestions(query) {
   const suggestList = getOrCreateSuggestList();
   suggestList.innerHTML = '';
   
-  if (!currentResults) {
+  if (!currentResults || activeTab !== 'sales') {
     suggestList.classList.add('hidden');
     return;
   }
 
   const qLower = query.toLowerCase();
-  
-  // Only search and filter by Customer Name strings
   const matchedSales = (currentResults.sales || []).filter(s => 
     (s.Customer || '').toLowerCase().includes(qLower)
   );
 
-  // Group by unique Customer Name to avoid duplicate suggestions
   const uniqueCustomers = [];
   const uniqueMatchedSales = [];
   
@@ -216,7 +306,7 @@ function showSuggestions(query) {
       <div class="text-[10px] text-slate-400 font-semibold">Customer Match</div>
     `;
     row.addEventListener('click', () => {
-      searchInput.value = s.Customer;
+      salesInput.value = s.Customer;
       hideSuggestions();
       executeSearch(s.Customer);
     });
@@ -242,14 +332,14 @@ function resetUI() {
   paginationControls.classList.add('hidden');
   emptyState.classList.remove('hidden');
   
-  const resultsList = document.getElementById('unified-results-list');
-  if (resultsList) resultsList.innerHTML = '';
+  salesList.innerHTML = '';
+  productsList.innerHTML = '';
   
   currentResults = null;
   currentPage = 1;
 }
 
-// Perform API global search call
+// Perform API global search call with scope routing
 async function executeSearch(query) {
   if (!query) return;
 
@@ -260,13 +350,13 @@ async function executeSearch(query) {
   searchTriageBadge.classList.add('hidden');
   paginationControls.classList.add('hidden');
 
-  // Enforce "Date: Newest First" as the default sort when a new search executes
+  // Default sorting dropdown based on active tab
   if (filterSortSelect) {
-    filterSortSelect.value = 'date-desc';
+    filterSortSelect.value = activeTab === 'sales' ? 'date-desc' : 'default';
   }
 
   const sanitizedUrl = backendUrl.replace(/\/$/, '');
-  const searchUrl = `${sanitizedUrl}/api/global-search?query=${encodeURIComponent(query)}`;
+  const searchUrl = `${sanitizedUrl}/api/global-search?query=${encodeURIComponent(query)}&scope=${activeTab}`;
 
   try {
     const response = await fetch(searchUrl);
@@ -289,7 +379,7 @@ async function executeSearch(query) {
     errorMessage.textContent = error.message || "Unable to reach server. Check backend URL configuration.";
     errorBanner.classList.remove('hidden');
   } finally {
-    // Bulletproof Loader spinner hide
+    // Loader spinner guaranteed hide
     loader.classList.add('hidden');
   }
 }
@@ -303,101 +393,56 @@ if (filterSortSelect) {
   });
 }
 
-// Combine and sort sales and products datasets into a unified array
+// Combine and sort active scope's datasets
 function getCombinedSortedItems() {
   if (!currentResults) return [];
   
   const sortVal = filterSortSelect ? filterSortSelect.value : 'date-desc';
-  const queryText = searchInput.value.trim().toLowerCase();
+  const queryText = activeTab === 'sales' 
+    ? salesInput.value.trim().toLowerCase() 
+    : productsInput.value.trim().toLowerCase();
 
-  const filteredSales = (currentResults.sales || []).filter(s => {
-    const status = (s.Status || '').toUpperCase();
-    return status !== 'VOID' && status !== 'VOIDED';
-  });
+  if (activeTab === 'sales') {
+    const filteredSales = (currentResults.sales || []).filter(s => {
+      const status = (s.Status || '').toUpperCase();
+      return status !== 'VOID' && status !== 'VOIDED';
+    });
 
-  const productsList = currentResults.products || [];
+    const combinedItems = filteredSales.map(s => ({ type: 'sale', data: s }));
 
-  const isProductPriority = currentResults.priorityContext === "product";
-
-  let combinedItems = [];
-  if (isProductPriority) {
-    // Put products first, then sales
-    combinedItems = [
-      ...productsList.map(p => ({ type: 'product', data: p })),
-      ...filteredSales.map(s => ({ type: 'sale', data: s }))
-    ];
-  } else {
-    // Standard order
-    combinedItems = [
-      ...filteredSales.map(s => ({ type: 'sale', data: s })),
-      ...productsList.map(p => ({ type: 'product', data: p }))
-    ];
-  }
-
-  // Sorting Handler
-  if (sortVal === 'default') {
-    combinedItems.sort((a, b) => {
-      if (isProductPriority && a.type !== b.type) {
-        return a.type === 'product' ? -1 : 1;
-      }
-
-      const nameA = a.type === 'sale' ? (a.data.Customer || '') : (a.data.FamilyName || a.data.Name || '');
-      const nameB = b.type === 'sale' ? (b.data.Customer || '') : (b.data.FamilyName || b.data.Name || '');
-      const scoreA = getRelevanceScore(nameA, queryText);
-      const scoreB = getRelevanceScore(nameB, queryText);
-      if (scoreA !== scoreB) return scoreB - scoreA;
-
-      if (a.type !== b.type) {
-        return a.type === 'sale' ? -1 : 1;
-      }
-
-      if (a.type === 'sale') {
+    // Sort Sales
+    if (sortVal === 'default' || sortVal === 'date-desc') {
+      combinedItems.sort((a, b) => {
         const da = a.data.OrderDate ? new Date(a.data.OrderDate) : new Date(0);
         const db = b.data.OrderDate ? new Date(b.data.OrderDate) : new Date(0);
         return db - da;
-      } else {
-        return (a.data.FamilyName || a.data.Name || '').localeCompare(b.data.FamilyName || b.data.Name || '');
-      }
-    });
-  } else if (sortVal === 'date-desc') {
-    combinedItems.sort((a, b) => {
-      if (isProductPriority && a.type !== b.type) {
-        return a.type === 'product' ? -1 : 1;
-      }
-      const da = a.type === 'sale' ? (a.data.OrderDate ? new Date(a.data.OrderDate) : new Date(0)) : new Date(0);
-      const db = b.type === 'sale' ? (b.data.OrderDate ? new Date(b.data.OrderDate) : new Date(0)) : new Date(0);
-      return db - da;
-    });
-  } else if (sortVal === 'date-asc') {
-    combinedItems.sort((a, b) => {
-      if (isProductPriority && a.type !== b.type) {
-        return a.type === 'product' ? -1 : 1;
-      }
-      const da = a.type === 'sale' ? (a.data.OrderDate ? new Date(a.data.OrderDate) : new Date(0)) : new Date(0);
-      const db = b.type === 'sale' ? (b.data.OrderDate ? new Date(b.data.OrderDate) : new Date(0)) : new Date(0);
-      return da - db;
-    });
-  } else if (sortVal === 'name-az') {
-    combinedItems.sort((a, b) => {
-      if (isProductPriority && a.type !== b.type) {
-        return a.type === 'product' ? -1 : 1;
-      }
-      const nameA = a.type === 'sale' ? (a.data.Customer || '') : (a.data.FamilyName || a.data.Name || '');
-      const nameB = b.type === 'sale' ? (b.data.Customer || '') : (b.data.FamilyName || b.data.Name || '');
-      return nameA.localeCompare(nameB);
-    });
-  } else if (sortVal === 'name-za') {
-    combinedItems.sort((a, b) => {
-      if (isProductPriority && a.type !== b.type) {
-        return a.type === 'product' ? -1 : 1;
-      }
-      const nameA = a.type === 'sale' ? (a.data.Customer || '') : (a.data.FamilyName || a.data.Name || '');
-      const nameB = b.type === 'sale' ? (b.data.Customer || '') : (b.data.FamilyName || b.data.Name || '');
-      return nameB.localeCompare(nameA);
-    });
-  }
+      });
+    } else if (sortVal === 'date-asc') {
+      combinedItems.sort((a, b) => {
+        const da = a.data.OrderDate ? new Date(a.data.OrderDate) : new Date(0);
+        const db = b.data.OrderDate ? new Date(b.data.OrderDate) : new Date(0);
+        return da - db;
+      });
+    } else if (sortVal === 'name-az') {
+      combinedItems.sort((a, b) => (a.data.Customer || '').localeCompare(b.data.Customer || ''));
+    } else if (sortVal === 'name-za') {
+      combinedItems.sort((a, b) => (b.data.Customer || '').localeCompare(a.data.Customer || ''));
+    }
+    return combinedItems;
 
-  return combinedItems;
+  } else {
+    // products
+    const productsList = currentResults.products || [];
+    const combinedItems = productsList.map(p => ({ type: 'product', data: p }));
+
+    // Sort Products
+    if (sortVal === 'default' || sortVal === 'name-az') {
+      combinedItems.sort((a, b) => (a.data.FamilyName || '').localeCompare(b.data.FamilyName || ''));
+    } else if (sortVal === 'name-za') {
+      combinedItems.sort((a, b) => (b.data.FamilyName || '').localeCompare(a.data.FamilyName || ''));
+    }
+    return combinedItems;
+  }
 }
 
 function applyFilterAndRender() {
@@ -426,24 +471,19 @@ function applyFilterAndRender() {
   paginationControls.classList.remove('hidden');
 
   if (pageItems.length > 0) {
-    triageType.textContent = pageItems[0].type === 'sale' ? 'Customer Sales' : 'Product Inventory';
+    triageType.textContent = activeTab === 'sales' ? 'Customer Sales' : 'Product Inventory';
     searchTriageBadge.classList.remove('hidden');
   }
 
-  let resultsList = document.getElementById('unified-results-list');
-  if (!resultsList) {
-    resultsList = document.createElement('div');
-    resultsList.id = 'unified-results-list';
-    resultsList.className = 'space-y-3';
-    resultsPanel.appendChild(resultsList);
-  }
-  resultsList.innerHTML = '';
+  // Clear specific active container list
+  salesList.innerHTML = '';
+  productsList.innerHTML = '';
 
   pageItems.forEach(item => {
     if (item.type === 'sale') {
-      resultsList.appendChild(createSaleCard(item.data));
+      salesList.appendChild(createSaleCard(item.data));
     } else {
-      resultsList.appendChild(createProductCard(item.data));
+      productsList.appendChild(createProductCard(item.data));
     }
   });
 
