@@ -62,35 +62,141 @@ module.exports = async function (req, res) {
   try {
     const cleanQuery = query.trim();
 
-    // Fire low-weight index calls concurrently (limit=1000 to maximize history)
-    const [productsRes, salesRes] = await Promise.allSettled([
+    // Fire index and availability calls concurrently
+    const [productsRes, salesRes, availByNameRes, availBySkuRes] = await Promise.allSettled([
       fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Product?Search=${encodeURIComponent(cleanQuery)}`, { headers }),
-      fetch(`https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(cleanQuery)}&limit=1000`, { headers })
+      fetch(`https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(cleanQuery)}&limit=1000`, { headers }),
+      fetch(`https://inventory.dearsystems.com/ExternalApi/v2/ProductAvailability?name=${encodeURIComponent(cleanQuery)}`, { headers }),
+      fetch(`https://inventory.dearsystems.com/ExternalApi/v2/ProductAvailability?sku=${encodeURIComponent(cleanQuery)}`, { headers })
     ]);
 
     let products = [];
     let sales = [];
+    const availMap = new Map();
 
-    // Parse Product List with Strict Product Matching Guard
+    const jsonPromises = [];
+
+    // Parse Product List
     if (productsRes.status === 'fulfilled' && productsRes.value.ok) {
-      const pData = await productsRes.value.json();
-      const rawProducts = pData.Products || [];
-      const qLower = cleanQuery.toLowerCase();
-      // Only retain products where SKU or Name contains the query
-      products = rawProducts.filter(p =>
-        (p.SKU || '').toLowerCase().includes(qLower) ||
-        (p.Name || '').toLowerCase().includes(qLower)
-      );
+      jsonPromises.push(productsRes.value.json().then(pData => {
+        const rawProducts = pData.Products || [];
+        const qLower = cleanQuery.toLowerCase();
+        products = rawProducts.filter(p =>
+          (p.SKU || '').toLowerCase().includes(qLower) ||
+          (p.Name || '').toLowerCase().includes(qLower)
+        );
+      }));
     }
 
     // Parse Sales List & Filter VOID orders
     if (salesRes.status === 'fulfilled' && salesRes.value.ok) {
-      const sData = await salesRes.value.json();
-      const rawSales = sData.SaleList || [];
-      sales = rawSales.filter(s => s.Status && s.Status.toUpperCase() !== 'VOID' && s.Status.toUpperCase() !== 'VOIDED');
+      jsonPromises.push(salesRes.value.json().then(sData => {
+        const rawSales = sData.SaleList || [];
+        sales = rawSales.filter(s => s.Status && s.Status.toUpperCase() !== 'VOID' && s.Status.toUpperCase() !== 'VOIDED');
+      }));
     }
 
-    // Pre-Hydration Chronological Sort
+    // Parse Availability Lists
+    const processAvail = async (res) => {
+      if (res.status === 'fulfilled' && res.value.ok) {
+        try {
+          const data = await res.value.json();
+          const list = data.ProductAvailabilityList || [];
+          for (const item of list) {
+            if (item.SKU) {
+              availMap.set(item.SKU.toLowerCase(), {
+                OnHand: item.OnHand || 0,
+                Allocated: item.Allocated || 0,
+                OnOrder: item.OnOrder || 0,
+                Available: item.Available || 0
+              });
+            }
+          }
+        } catch (e) {
+          console.error("Failed to parse availability response:", e);
+        }
+      }
+    };
+
+    jsonPromises.push(processAvail(availByNameRes));
+    jsonPromises.push(processAvail(availBySkuRes));
+
+    // Await all initial JSON formatting tasks
+    await Promise.all(jsonPromises);
+
+    // Hydrate products with availability metrics
+    for (const p of products) {
+      const skuKey = (p.SKU || '').toLowerCase();
+      const stock = availMap.get(skuKey) || { OnHand: 0, Allocated: 0, OnOrder: 0, Available: 0 };
+      p.OnHand = stock.OnHand;
+      p.Allocated = stock.Allocated;
+      p.OnOrder = stock.OnOrder;
+      p.Available = stock.Available;
+    }
+
+    // Evaluate Search Triage query priority match
+    let priorityContext = null;
+    const qLower = cleanQuery.toLowerCase();
+    const hasProductMatch = products.some(p => {
+      const sku = (p.SKU || '').toLowerCase();
+      const name = (p.Name || '').toLowerCase();
+      const familyName = (p.FamilyName || p.ProductFamily || (p.Family && p.Family.Name) || '').toLowerCase();
+      return sku.includes(qLower) || name.includes(qLower) || familyName.includes(qLower);
+    });
+
+    if (hasProductMatch) {
+      priorityContext = "product";
+    }
+
+    // Group variants sharing an active family identity
+    const groupedProducts = [];
+    const familyMap = new Map();
+
+    for (const p of products) {
+      const familyName = p.Family ? p.Family.Name : null;
+      const brand = p.Brand || 'N/A';
+
+      const variant = {
+        SKU: p.SKU || 'N/A',
+        Name: p.Name || 'Unnamed Product',
+        OnHand: p.OnHand !== undefined ? p.OnHand : 0,
+        Allocated: p.Allocated !== undefined ? p.Allocated : 0,
+        OnOrder: p.OnOrder !== undefined ? p.OnOrder : 0,
+        PriceTier1: p.PriceTier1 !== undefined ? p.PriceTier1 : 0,
+        PriceTier5: p.PriceTier5 !== undefined ? p.PriceTier5 : 0,
+        SaleTaxRule: p.SaleTaxRule || 'N/A'
+      };
+
+      if (familyName) {
+        const key = familyName.toLowerCase();
+        if (familyMap.has(key)) {
+          familyMap.get(key).Variants.push(variant);
+        } else {
+          const familyObj = {
+            isFamily: true,
+            FamilyName: familyName,
+            Brand: brand,
+            Variants: [variant]
+          };
+          familyMap.set(key, familyObj);
+          groupedProducts.push(familyObj);
+        }
+      } else {
+        groupedProducts.push({
+          isFamily: false,
+          FamilyName: p.Name || 'Unnamed Product',
+          Brand: brand,
+          Variants: [variant]
+        });
+      }
+    }
+
+    // Sort variants A-Z by SKU
+    for (const fp of groupedProducts) {
+      fp.Variants.sort((a, b) => (a.SKU || '').localeCompare(b.SKU || ''));
+    }
+
+    // Pre-Hydration Chronological Sort for Sales
     sales.sort((a, b) => {
       const da = a.OrderDate ? new Date(a.OrderDate) : new Date(0);
       const db = b.OrderDate ? new Date(b.OrderDate) : new Date(0);
@@ -100,18 +206,14 @@ module.exports = async function (req, res) {
     // Expand Card Visibility Index to 10 items
     const slicedSales = sales.slice(0, 10);
 
-    // Hydrate Sales concurrently
+    // Hydrate Sales concurrently (Without /Sale/Fulfilment request)
     const detailedSales = await Promise.all(slicedSales.map(async (sale) => {
       try {
         const saleId = sale.SaleID || sale.ID || '';
-        const [detailRes, fulRes] = await Promise.all([
-          fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Sale?ID=${saleId}`, { headers }),
-          fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Sale/Fulfilment?TaskID=${saleId}`, { headers })
-        ]);
+        const detailRes = await fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Sale?ID=${saleId}`, { headers });
 
-        let detailData = {}, fulData = {};
+        let detailData = {};
         if (detailRes.ok) detailData = await detailRes.json();
-        if (fulRes.ok) fulData = await fulRes.json();
 
         // Relational Data Hydration: Look up Customer profile using CustomerID
         const customerId = detailData.CustomerID || sale.CustomerID || '';
@@ -131,22 +233,12 @@ module.exports = async function (req, res) {
         const customerDiscount = (customerProfile && customerProfile.Discount !== undefined) ? customerProfile.Discount : (detailData.Discount || 0);
         const customerAreaCode = (customerProfile && customerProfile.AdditionalAttribute6) || (detailData.AdditionalAttribute6) || 'N/A';
 
-        // Run deep recursive tracking scanner
+        // Run deep recursive tracking scanner on primary transaction model
         const trackingList = [];
         scanForTrackingNumbers(detailData, trackingList);
-        scanForTrackingNumbers(fulData, trackingList);
 
-        // Fetch shipping notes
-        let shippingNotesList = [];
-        if (detailData.ShippingNotes) shippingNotesList.push(detailData.ShippingNotes);
-        const fulfillments = detailData.Fulfillments || detailData.Fulfillment || [];
-        if (Array.isArray(fulfillments)) {
-          fulfillments.forEach(f => {
-            if (f && f.Ship && (f.Ship.Notes || f.Ship.ShippingNotes || f.Ship.Comment)) {
-              shippingNotesList.push(f.Ship.Notes || f.Ship.ShippingNotes || f.Ship.Comment);
-            }
-          });
-        }
+        // Fetch shipping notes directly from primary model
+        const shippingNotes = detailData.ShippingNotes || 'N/A';
 
         // Parse Invoice Status & Due Date out of the first available invoice object
         const invoices = detailData.Invoices || detailData.Invoice || [];
@@ -156,7 +248,14 @@ module.exports = async function (req, res) {
         let invoiceNumber = 'N/A';
         let invoiceDueDate = null;
         let invoiceStatus = 'UNPAID';
-        let invoiceAmount = detailData.Order ? (detailData.Order.TotalBeforeTax || detailData.Order.Total) : sale.InvoiceAmount;
+        
+        // Tax-inclusive financial balancing total
+        let invoiceAmount = sale.InvoiceAmount || 0;
+        if (targetInvoice && targetInvoice.Total !== undefined) {
+          invoiceAmount = targetInvoice.Total;
+        } else if (detailData.Order && detailData.Order.Total !== undefined) {
+          invoiceAmount = detailData.Order.Total;
+        }
 
         if (targetInvoice) {
           invoiceNumber = targetInvoice.InvoiceNumber || 'N/A';
@@ -189,7 +288,7 @@ module.exports = async function (req, res) {
           InvoiceStatus: invoiceStatus,
           InvoiceAmount: invoiceAmount || 0,
           CustomerReference: detailData.CustomerReference || 'N/A',
-          ShippingNotes: shippingNotesList.filter((v, i, a) => a.indexOf(v) === i && v).join('; ') || 'N/A',
+          ShippingNotes: shippingNotes,
           AreaCode: customerAreaCode,
           SalesRepresentative: detailData.SalesRepresentative || 'N/A',
           Discount: customerDiscount,
@@ -203,14 +302,14 @@ module.exports = async function (req, res) {
       }
     }));
 
-    // Default Sort Allocation: Newest sales orders first
+    // Default Chronological Sort Allocation
     detailedSales.sort((a, b) => {
       const da = a.OrderDate ? new Date(a.OrderDate) : new Date(0);
       const db = b.OrderDate ? new Date(b.OrderDate) : new Date(0);
       return db - da;
     });
 
-    return res.status(200).json({ products, sales: detailedSales });
+    return res.status(200).json({ products: groupedProducts, sales: detailedSales, priorityContext });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }

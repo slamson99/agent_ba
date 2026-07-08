@@ -317,16 +317,32 @@ function getCombinedSortedItems() {
 
   const productsList = currentResults.products || [];
 
-  const combinedItems = [
-    ...filteredSales.map(s => ({ type: 'sale', data: s })),
-    ...productsList.map(p => ({ type: 'product', data: p }))
-  ];
+  const isProductPriority = currentResults.priorityContext === "product";
+
+  let combinedItems = [];
+  if (isProductPriority) {
+    // Put products first, then sales
+    combinedItems = [
+      ...productsList.map(p => ({ type: 'product', data: p })),
+      ...filteredSales.map(s => ({ type: 'sale', data: s }))
+    ];
+  } else {
+    // Standard order
+    combinedItems = [
+      ...filteredSales.map(s => ({ type: 'sale', data: s })),
+      ...productsList.map(p => ({ type: 'product', data: p }))
+    ];
+  }
 
   // Sorting Handler
   if (sortVal === 'default') {
     combinedItems.sort((a, b) => {
-      const nameA = a.type === 'sale' ? (a.data.Customer || '') : (a.data.Name || '');
-      const nameB = b.type === 'sale' ? (b.data.Customer || '') : (b.data.Name || '');
+      if (isProductPriority && a.type !== b.type) {
+        return a.type === 'product' ? -1 : 1;
+      }
+
+      const nameA = a.type === 'sale' ? (a.data.Customer || '') : (a.data.FamilyName || a.data.Name || '');
+      const nameB = b.type === 'sale' ? (b.data.Customer || '') : (b.data.FamilyName || b.data.Name || '');
       const scoreA = getRelevanceScore(nameA, queryText);
       const scoreB = getRelevanceScore(nameB, queryText);
       if (scoreA !== scoreB) return scoreB - scoreA;
@@ -340,31 +356,43 @@ function getCombinedSortedItems() {
         const db = b.data.OrderDate ? new Date(b.data.OrderDate) : new Date(0);
         return db - da;
       } else {
-        return (a.data.SKU || '').localeCompare(b.data.SKU || '');
+        return (a.data.FamilyName || a.data.Name || '').localeCompare(b.data.FamilyName || b.data.Name || '');
       }
     });
   } else if (sortVal === 'date-desc') {
     combinedItems.sort((a, b) => {
+      if (isProductPriority && a.type !== b.type) {
+        return a.type === 'product' ? -1 : 1;
+      }
       const da = a.type === 'sale' ? (a.data.OrderDate ? new Date(a.data.OrderDate) : new Date(0)) : new Date(0);
       const db = b.type === 'sale' ? (b.data.OrderDate ? new Date(b.data.OrderDate) : new Date(0)) : new Date(0);
       return db - da;
     });
   } else if (sortVal === 'date-asc') {
     combinedItems.sort((a, b) => {
+      if (isProductPriority && a.type !== b.type) {
+        return a.type === 'product' ? -1 : 1;
+      }
       const da = a.type === 'sale' ? (a.data.OrderDate ? new Date(a.data.OrderDate) : new Date(0)) : new Date(0);
       const db = b.type === 'sale' ? (b.data.OrderDate ? new Date(b.data.OrderDate) : new Date(0)) : new Date(0);
       return da - db;
     });
   } else if (sortVal === 'name-az') {
     combinedItems.sort((a, b) => {
-      const nameA = a.type === 'sale' ? (a.data.Customer || '') : (a.data.Name || '');
-      const nameB = b.type === 'sale' ? (b.data.Customer || '') : (b.data.Name || '');
+      if (isProductPriority && a.type !== b.type) {
+        return a.type === 'product' ? -1 : 1;
+      }
+      const nameA = a.type === 'sale' ? (a.data.Customer || '') : (a.data.FamilyName || a.data.Name || '');
+      const nameB = b.type === 'sale' ? (b.data.Customer || '') : (b.data.FamilyName || b.data.Name || '');
       return nameA.localeCompare(nameB);
     });
   } else if (sortVal === 'name-za') {
     combinedItems.sort((a, b) => {
-      const nameA = a.type === 'sale' ? (a.data.Customer || '') : (a.data.Name || '');
-      const nameB = b.type === 'sale' ? (b.data.Customer || '') : (b.data.Name || '');
+      if (isProductPriority && a.type !== b.type) {
+        return a.type === 'product' ? -1 : 1;
+      }
+      const nameA = a.type === 'sale' ? (a.data.Customer || '') : (a.data.FamilyName || a.data.Name || '');
+      const nameB = b.type === 'sale' ? (b.data.Customer || '') : (b.data.FamilyName || b.data.Name || '');
       return nameB.localeCompare(nameA);
     });
   }
@@ -422,92 +450,67 @@ function applyFilterAndRender() {
   resultsPanel.classList.remove('hidden');
 }
 
-// Generate Product availability Card element (collapsed by default)
+// Generate Grouped Product Family Card element (collapsible)
 function createProductCard(product) {
-  const sku = product.SKU || 'N/A';
-  const name = product.Name || 'Unnamed Product';
+  const familyName = product.FamilyName || 'Unnamed Family';
   const brand = product.Brand || 'N/A';
-  const onHand = product.OnHand !== undefined ? product.OnHand : 0;
-  const allocated = product.Allocated !== undefined ? product.Allocated : 0;
-  const onOrder = product.OnOrder !== undefined ? product.OnOrder : 0;
-  
-  const currentStock = onHand - allocated;
-  const barcode = product.Barcode || 'N/A';
-  const length = product.Length || 0;
-  const width = product.Width || 0;
-  const height = product.Height || 0;
-  const weight = product.Weight || 0;
-  const dimBlock = `Barcode: ${escapeHTML(barcode)} | Dim: ${length}x${width}x${height} | Wt: ${weight}`;
+  const variants = product.Variants || [];
 
   const card = document.createElement('div');
   card.className = 'bg-white border border-slate-200 rounded-lg p-3 shadow-sm hover:border-slate-300 transition-colors flex flex-col text-xs';
 
-  // Format Product Family
-  let familyHtml = '';
-  if (product.Family) {
-    familyHtml = `
-      <div class="mt-1.5 p-1.5 bg-slate-50 border border-slate-100 rounded">
-        <div class="font-bold text-slate-700 text-[8px] uppercase tracking-wider mb-1">Product Family</div>
-        <div class="text-[9px] text-slate-600">
-          <span class="font-medium text-slate-700">Family Name:</span> ${escapeHTML(product.Family.Name || 'N/A')}
-          ${product.Family.SKU ? `<br><span class="font-medium text-slate-700">Family SKU:</span> ${escapeHTML(product.Family.SKU)}` : ''}
+  // Build variant grid rows HTML (sorted alphabetically by SKU in backend)
+  const variantsHtml = variants.map(v => {
+    const availStock = (v.OnHand || 0) - (v.Allocated || 0);
+    const onOrder = v.OnOrder || 0;
+    const wsPrice = (v.PriceTier1 || 0).toFixed(2);
+    const rrpPrice = (v.PriceTier5 || 0).toFixed(2);
+    const taxRule = v.SaleTaxRule || 'N/A';
+
+    return `
+      <div class="grid grid-cols-3 gap-2 py-2.5 border-b border-slate-100 last:border-0 text-[10px] items-center">
+        <!-- Column 1: SKU & Name/Description -->
+        <div class="pr-1">
+          <div class="font-bold text-slate-800 break-all">${escapeHTML(v.SKU)}</div>
+          <div class="text-slate-500 break-words text-[9px] mt-0.5">${escapeHTML(v.Name)}</div>
+        </div>
+        <!-- Column 2: Inventory Status -->
+        <div class="text-slate-600 border-l border-slate-100 pl-2">
+          <div>Stock Available: <strong class="text-emerald-700 font-semibold">${availStock}</strong></div>
+          <div class="text-[9px] mt-0.5 text-slate-400">On Order: ${onOrder}</div>
+        </div>
+        <!-- Column 3: Commercial Meta -->
+        <div class="text-slate-600 border-l border-slate-100 pl-2 text-right">
+          <div>WS: <strong class="text-slate-800 font-semibold">$${wsPrice}</strong></div>
+          <div>RRP (incl GST): <strong class="text-slate-800 font-semibold">$${rrpPrice}</strong></div>
+          <div class="text-[8px] text-slate-400 mt-0.5 truncate" title="${escapeHTML(taxRule)}">Tax: ${escapeHTML(taxRule)}</div>
         </div>
       </div>
     `;
-  }
-
-  // Format BOM components
-  let bomHtml = '';
-  if (product.BOM && Array.isArray(product.BOM) && product.BOM.length > 0) {
-    bomHtml = `
-      <div class="mt-1.5 p-1.5 bg-slate-50 border border-slate-100 rounded">
-        <div class="font-bold text-slate-700 text-[8px] uppercase tracking-wider mb-1">Components (BOM)</div>
-        <ul class="space-y-0.5 list-disc pl-3 text-[9px] text-slate-500">
-          ${product.BOM.map(c => `<li><span class="font-medium text-slate-700">${escapeHTML(c.SKU)}</span> (Qty: ${c.Quantity}${c.Name ? ` - ${escapeHTML(c.Name)}` : ''})</li>`).join('')}
-        </ul>
-      </div>
-    `;
-  }
+  }).join('');
 
   card.innerHTML = `
-    <!-- Collapsible Header Summary Row -->
+    <!-- Header Block (Collapsible Toggle) -->
     <div class="card-header flex justify-between items-center cursor-pointer select-none">
       <div class="flex-grow pr-2">
         <h3 class="font-bold text-slate-800 text-[13px] flex items-center space-x-1.5">
-          <span class="text-sky-600">📦 ${escapeHTML(sku)}</span>
-          <span class="text-[10px] text-slate-400 font-normal">| ${escapeHTML(name)}</span>
+          <span class="text-sky-600">📦 ${escapeHTML(familyName)}</span>
         </h3>
         <p class="text-slate-400 font-medium text-[9px] mt-0.5">Brand: ${escapeHTML(brand)}</p>
       </div>
       <div class="flex items-center space-x-2">
-        <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-          Avail: ${currentStock}
+        <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-sky-50 text-sky-700 border border-sky-200">
+          ${variants.length} ${variants.length === 1 ? 'Variant' : 'Variants'}
         </span>
         <span class="toggle-icon text-slate-400 font-bold text-xs">▼</span>
       </div>
     </div>
 
-    <!-- Collapsible Details Panel (Hidden by default) -->
-    <div class="card-details hidden space-y-2 pt-2.5 mt-2.5 border-t border-slate-100">
-      <div class="grid grid-cols-2 gap-2 text-[10px]">
-        <div class="bg-slate-50 p-2 rounded border border-slate-100">
-          <span class="text-slate-400 block uppercase tracking-wider text-[8px]">On Hand</span>
-          <strong class="text-slate-800 text-[11px]">${onHand}</strong>
-        </div>
-        <div class="bg-slate-50 p-2 rounded border border-slate-100">
-          <span class="text-slate-400 block uppercase tracking-wider text-[8px]">Allocated</span>
-          <strong class="text-slate-800 text-[11px]">${allocated}</strong>
-        </div>
+    <!-- Collapsible Details Panel (Variants Grid) -->
+    <div class="card-details ${variants.length > 1 ? 'hidden' : ''} pt-2 mt-2 border-t border-slate-100">
+      <div class="bg-slate-50/50 rounded-lg p-2.5 border border-slate-100 divide-y divide-slate-100">
+        ${variantsHtml}
       </div>
-      <div class="bg-slate-50 p-2 rounded border border-slate-100 text-[10px] flex justify-between items-center">
-        <span class="text-slate-400 uppercase tracking-wider text-[8px]">On Order</span>
-        <strong class="text-slate-800">${onOrder}</strong>
-      </div>
-      <div class="text-[9px] text-slate-400 font-mono select-all bg-slate-50 p-1.5 rounded border border-slate-100">
-        ${escapeHTML(dimBlock)}
-      </div>
-      ${familyHtml}
-      ${bomHtml}
     </div>
   `;
 
@@ -515,6 +518,11 @@ function createProductCard(product) {
   const header = card.querySelector('.card-header');
   const details = card.querySelector('.card-details');
   const toggleIcon = card.querySelector('.toggle-icon');
+  
+  if (variants.length <= 1) {
+    toggleIcon.textContent = '▲';
+  }
+
   header.addEventListener('click', () => {
     const isHidden = details.classList.toggle('hidden');
     toggleIcon.textContent = isHidden ? '▼' : '▲';
@@ -549,7 +557,7 @@ function formatTrackingNumbers(trackingStr) {
   return escapeHTML(trackingStr);
 }
 
-// Generate Sale Card element (Renders collapsed by default, zero download buttons)
+// Generate Sale Card element (Renders collapsed by default, zero copy/download buttons)
 function createSaleCard(sale) {
   const saleId = sale.SaleID || sale.ID || '';
   const orderNumber = sale.OrderNumber || 'Unassigned';
@@ -596,7 +604,15 @@ function createSaleCard(sale) {
             
             let availHtml = '';
             if (currentResults && currentResults.products) {
-              const match = currentResults.products.find(p => (p.SKU || '').toLowerCase() === sku.toLowerCase());
+              // Find matching variant SKU within grouped families
+              let match = null;
+              for (const family of currentResults.products) {
+                const found = (family.Variants || []).find(v => (v.SKU || '').toLowerCase() === sku.toLowerCase());
+                if (found) {
+                  match = found;
+                  break;
+                }
+              }
               if (match) {
                 const stock = (match.OnHand || 0) - (match.Allocated || 0);
                 const orderQty = match.OnOrder || 0;
@@ -673,7 +689,7 @@ function createSaleCard(sale) {
         <div class="pt-1 border-t border-slate-100 mt-1"><span class="text-slate-500 block pb-0.5">Shipping Notes:</span> <span class="text-slate-600 block italic leading-normal">${escapeHTML(shippingNotes)}</span></div>
       </div>
 
-      <!-- Embedded Order Lines & availability details -->
+      <!-- Embedded Order Lines -->
       ${linesHtml}
     </div>
   `;
