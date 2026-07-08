@@ -220,10 +220,10 @@ module.exports = async function (req, res) {
       return res.status(200).json(detailedSales);
 
     } else if (activeScope === 'products') {
-      // BLOCK B: Product Search Pipeline (Evading 429 Rate Limits with Single-Pass Catalog Query & Keywords param)
+      // BLOCK B: Product Search Pipeline (Global SKU queries to bypass Page-limited lists)
       const [productsRes, availRes] = await Promise.allSettled([
-        fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Product?Page=1&Limit=50&Search=${encodeURIComponent(cleanQuery)}`, { headers }),
-        fetch(`https://inventory.dearsystems.com/ExternalApi/v2/ref/productavailability?Page=1&Limit=100&Keywords=${encodeURIComponent(cleanQuery)}`, { headers })
+        fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Product?Sku=${encodeURIComponent(cleanQuery)}`, { headers }),
+        fetch(`https://inventory.dearsystems.com/ExternalApi/v2/ref/productavailability?Sku=${encodeURIComponent(cleanQuery)}`, { headers })
       ]);
 
       let products = [];
@@ -233,16 +233,18 @@ module.exports = async function (req, res) {
       // Parse Products
       if (productsRes.status === 'fulfilled' && productsRes.value.ok) {
         jsonPromises.push(productsRes.value.json().then(pData => {
-          const rawProducts = pData.Products || [];
+          // Handle both singular Product object response or Products array
+          const rawProducts = pData.Products || (pData.ID || pData.SKU ? [pData] : []);
           const qLower = cleanQuery.toLowerCase();
           products = rawProducts.filter(p =>
+            (p.SKU || '').toLowerCase() === qLower ||
             (p.SKU || '').toLowerCase().includes(qLower) ||
             (p.Name || '').toLowerCase().includes(qLower)
           );
         }));
       }
 
-      // Parse Availability (Single global lookup with Keywords parameter)
+      // Parse Availability
       if (availRes.status === 'fulfilled' && availRes.value.ok) {
         jsonPromises.push(availRes.value.json().then(data => {
           let list = [];
@@ -252,6 +254,8 @@ module.exports = async function (req, res) {
             list = data.ProductAvailabilityList;
           } else if (data && data.ProductAvailability) {
             list = data.ProductAvailability;
+          } else if (data && (data.SKU || data.Available !== undefined)) {
+            list = [data];
           }
           availList = list;
         }).catch(e => console.error("Error parsing ref/productavailability JSON:", e)));
@@ -259,7 +263,7 @@ module.exports = async function (req, res) {
 
       await Promise.all(jsonPromises);
 
-      // Loop through catalog results and use in-memory .find() match to stitch records
+      // Loop through catalog results and use in-memory .find() match to stitch records based on SKU
       const flatProductsArray = [];
 
       for (const p of products) {
