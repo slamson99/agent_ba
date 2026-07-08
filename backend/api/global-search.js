@@ -220,33 +220,31 @@ module.exports = async function (req, res) {
       return res.status(200).json(detailedSales);
 
     } else if (activeScope === 'products') {
-      // BLOCK B: Product Search Pipeline (Sequential Fetching)
-      const productsRes = await fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Product?Search=${encodeURIComponent(cleanQuery)}`, { headers });
-      if (!productsRes.ok) {
-        throw new Error(`Cin7 Core Product catalog returned status ${productsRes.status}`);
-      }
+      // BLOCK B: Product Search Pipeline (Evading 429 Rate Limits with Single-Pass Catalog Query)
+      const [productsRes, availRes] = await Promise.allSettled([
+        fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Product?Page=1&Limit=50&Search=${encodeURIComponent(cleanQuery)}`, { headers }),
+        fetch(`https://inventory.dearsystems.com/ExternalApi/v2/ref/productavailability?Search=${encodeURIComponent(cleanQuery)}`, { headers })
+      ]);
 
-      const pData = await productsRes.json();
-      const rawProducts = pData.Products || [];
-      const qLower = cleanQuery.toLowerCase();
-
-      // Filter in-memory to SKU or Name containing query case-insensitive
-      const products = rawProducts.filter(p =>
-        (p.SKU || '').toLowerCase().includes(qLower) ||
-        (p.Name || '').toLowerCase().includes(qLower)
-      );
-
-      if (products.length === 0) {
-        return res.status(200).json([]);
-      }
-
-      // Sequential Fetching: Availability requested after catalog products are resolved
-      const availRes = await fetch(`https://inventory.dearsystems.com/ExternalApi/v2/ref/productavailability?Sku=${encodeURIComponent(cleanQuery)}`, { headers });
+      let products = [];
       const availMap = new Map();
+      const jsonPromises = [];
 
-      if (availRes.ok) {
-        try {
-          const data = await availRes.json();
+      // Parse Products
+      if (productsRes.status === 'fulfilled' && productsRes.value.ok) {
+        jsonPromises.push(productsRes.value.json().then(pData => {
+          const rawProducts = pData.Products || [];
+          const qLower = cleanQuery.toLowerCase();
+          products = rawProducts.filter(p =>
+            (p.SKU || '').toLowerCase().includes(qLower) ||
+            (p.Name || '').toLowerCase().includes(qLower)
+          );
+        }));
+      }
+
+      // Parse Availability (Single global lookup)
+      if (availRes.status === 'fulfilled' && availRes.value.ok) {
+        jsonPromises.push(availRes.value.json().then(data => {
           let list = [];
           if (Array.isArray(data)) {
             list = data;
@@ -264,70 +262,35 @@ module.exports = async function (req, res) {
               });
             }
           }
-        } catch (e) {
-          console.error("Error parsing ref/productavailability JSON:", e);
-        }
+        }).catch(e => console.error("Error parsing ref/productavailability JSON:", e)));
       }
 
-      // Map stock to products
+      await Promise.all(jsonPromises);
+
+      // Construct flat list of individual products without family groupings
+      const flatProductsArray = [];
+
       for (const p of products) {
         const skuKey = (p.SKU || '').toLowerCase();
         const stock = availMap.get(skuKey) || { AvailableStock: 0, OnOrder: 0 };
-        p.AvailableStock = stock.AvailableStock;
-        p.OnOrder = stock.OnOrder;
-      }
 
-      // Group variants sharing an active family identity using an object map
-      const familyMap = {};
-
-      for (const p of products) {
-        const familyId = (p.Family && p.Family.ID) || (p.Family && p.Family.Name) || p.ID || p.SKU || '';
-        const familyName = (p.Family && p.Family.Name) || p.Name || 'Unnamed Product';
-        const brand = p.Brand || 'N/A';
-
-        const variant = {
+        flatProductsArray.push({
           SKU: p.SKU || 'N/A',
           Name: p.Name || 'Unnamed Product',
-          AvailableStock: p.AvailableStock !== undefined ? p.AvailableStock : 0,
-          OnOrder: p.OnOrder !== undefined ? p.OnOrder : 0,
+          Brand: p.Brand || 'N/A',
+          AvailableStock: stock.AvailableStock,
+          OnOrder: stock.OnOrder,
           PriceTier1: p.PriceTier1 !== undefined ? p.PriceTier1 : 0,
           PriceTier5: p.PriceTier5 !== undefined ? p.PriceTier5 : 0,
           SaleTaxRule: p.SaleTaxRule || 'N/A'
-        };
-
-        if (p.Family && p.Family.Name) {
-          const key = familyId.toLowerCase();
-          if (familyMap[key]) {
-            familyMap[key].Variants.push(variant);
-          } else {
-            familyMap[key] = {
-              isFamily: true,
-              FamilyName: familyName,
-              Brand: brand,
-              Variants: [variant]
-            };
-          }
-        } else {
-          const key = (p.SKU || p.ID || '').toLowerCase();
-          familyMap[key] = {
-            isFamily: false,
-            FamilyName: p.Name || 'Unnamed Product',
-            Brand: brand,
-            Variants: [variant]
-          };
-        }
+        });
       }
 
-      // Flatten object map back into a standard array
-      const groupedArray = Object.values(familyMap);
+      // Sort flat list A-Z by SKU
+      flatProductsArray.sort((a, b) => (a.SKU || '').localeCompare(b.SKU || ''));
 
-      // Sort variants inside each family A-Z by SKU
-      for (const fp of groupedArray) {
-        fp.Variants.sort((a, b) => (a.SKU || '').localeCompare(b.SKU || ''));
-      }
-
-      // Return flat array payload directly
-      return res.status(200).json(groupedArray);
+      // Return flat array directly
+      return res.status(200).json(flatProductsArray);
     } else {
       return res.status(400).json({ error: `Invalid scope: ${activeScope}` });
     }

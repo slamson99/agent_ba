@@ -302,7 +302,7 @@ async function executeSearch(query) {
   if (!query) return;
 
   loader.classList.remove('hidden');
-  errorBanner.classList.add('hidden');
+  errorBanner.classList.add('hidden'); // Clear historical 429 notifications and error banners cleanly
   emptyState.classList.add('hidden');
   resultsPanel.classList.add('hidden');
   searchTriageBadge.classList.add('hidden');
@@ -390,14 +390,14 @@ function getCombinedSortedItems() {
     return combinedItems;
 
   } else {
-    // products (grouped families flat array)
+    // products (flat products array)
     const combinedItems = currentResults.map(p => ({ type: 'product', data: p }));
 
     // Sort Products
     if (sortVal === 'default' || sortVal === 'name-az') {
-      combinedItems.sort((a, b) => (a.data.FamilyName || '').localeCompare(b.data.FamilyName || ''));
+      combinedItems.sort((a, b) => (a.data.SKU || '').localeCompare(b.data.SKU || ''));
     } else if (sortVal === 'name-za') {
-      combinedItems.sort((a, b) => (b.data.FamilyName || '').localeCompare(a.data.FamilyName || ''));
+      combinedItems.sort((a, b) => (b.data.SKU || '').localeCompare(a.data.SKU || ''));
     }
     return combinedItems;
   }
@@ -435,88 +435,43 @@ function applyFilterAndRender() {
   resultsPanel.classList.remove('hidden');
 }
 
-// Generate Grouped Product Family Card element (collapsible with absolute check safeguards)
+// Generate Flat Product Card element (accordion logic removed)
 function createProductCard(product) {
-  if (!product || !product.Variants) return null;
+  if (!product) return null;
 
-  const familyName = product.FamilyName || 'Unnamed Family';
+  const sku = product.SKU || 'N/A';
+  const name = product.Name || 'Unnamed Product';
   const brand = product.Brand || 'N/A';
-  const variants = product.Variants || [];
+  const tax = product.SaleTaxRule || 'N/A';
+  const availStock = product.AvailableStock !== undefined ? product.AvailableStock : 0;
+  const onOrder = product.OnOrder !== undefined ? product.OnOrder : 0;
+  const wsPrice = (product.PriceTier1 || 0).toFixed(2);
+  const rrpPrice = (product.PriceTier5 || 0).toFixed(2);
 
   const card = document.createElement('div');
-  card.className = 'bg-white border border-slate-200 rounded-lg p-3 shadow-sm hover:border-slate-300 transition-colors flex flex-col text-xs';
-
-  // Build variant grid rows HTML (sorted alphabetically by SKU in backend)
-  const variantsHtml = variants.map(v => {
-    if (!v) return '';
-    
-    // Direct stock property assignment mapping
-    const availStock = v.AvailableStock !== undefined ? v.AvailableStock : 0;
-    const onOrder = v.OnOrder !== undefined ? v.OnOrder : 0;
-    const wsPrice = (v.PriceTier1 || 0).toFixed(2);
-    const rrpPrice = (v.PriceTier5 || 0).toFixed(2);
-    const taxRule = v.SaleTaxRule || 'N/A';
-
-    return `
-      <div class="grid grid-cols-3 gap-2 py-2.5 border-b border-slate-100 last:border-0 text-[10px] items-center">
-        <!-- Column 1: SKU & Name/Description -->
-        <div class="pr-1">
-          <div class="font-bold text-slate-800 break-all">${escapeHTML(v.SKU)}</div>
-          <div class="text-slate-500 break-words text-[9px] mt-0.5">${escapeHTML(v.Name)}</div>
-        </div>
-        <!-- Column 2: Inventory Status -->
-        <div class="text-slate-600 border-l border-slate-100 pl-2">
-          <div>Stock Available: <strong class="text-emerald-700 font-semibold">${availStock}</strong></div>
-          <div class="text-[9px] mt-0.5 text-slate-400">On Order: ${onOrder}</div>
-        </div>
-        <!-- Column 3: Commercial Meta -->
-        <div class="text-slate-600 border-l border-slate-100 pl-2 text-right">
-          <div>WS: <strong class="text-slate-800 font-semibold">$${wsPrice}</strong></div>
-          <div>RRP (incl GST): <strong class="text-slate-800 font-semibold">$${rrpPrice}</strong></div>
-          <div class="text-[8px] text-slate-400 mt-0.5 truncate" title="${escapeHTML(taxRule)}">Tax: ${escapeHTML(taxRule)}</div>
-        </div>
-      </div>
-    `;
-  }).join('');
+  card.className = 'bg-white border border-slate-200 rounded-lg p-3 shadow-sm hover:border-slate-300 transition-colors flex flex-col text-xs space-y-1.5';
 
   card.innerHTML = `
-    <!-- Header Block (Collapsible Toggle) -->
-    <div class="card-header flex justify-between items-center cursor-pointer select-none">
-      <div class="flex-grow pr-2">
-        <h3 class="font-bold text-slate-800 text-[13px] flex items-center space-x-1.5">
-          <span class="text-sky-600">📦 ${escapeHTML(familyName)}</span>
-        </h3>
-        <p class="text-slate-400 font-medium text-[9px] mt-0.5">Brand: ${escapeHTML(brand)}</p>
-      </div>
-      <div class="flex items-center space-x-2">
-        <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-sky-50 text-sky-700 border border-sky-200">
-          ${variants.length} ${variants.length === 1 ? 'Variant' : 'Variants'}
-        </span>
-        <span class="toggle-icon text-slate-400 font-bold text-xs">▼</span>
-      </div>
+    <div class="flex justify-between items-start">
+      <h3 class="font-bold text-slate-800 text-[12px] break-all leading-normal">
+        <span class="text-sky-600">📦 ${escapeHTML(sku)}</span> - ${escapeHTML(name)}
+      </h3>
     </div>
-
-    <!-- Collapsible Details Panel (Variants Grid) -->
-    <div class="card-details ${variants.length > 1 ? 'hidden' : ''} pt-2 mt-2 border-t border-slate-100">
-      <div class="bg-slate-50/50 rounded-lg p-2.5 border border-slate-100 divide-y divide-slate-100">
-        ${variantsHtml}
+    <p class="text-slate-400 font-medium text-[9px]">Brand: ${escapeHTML(brand)} | Tax: ${escapeHTML(tax)}</p>
+    
+    <div class="grid grid-cols-2 gap-2 pt-1">
+      <div class="bg-slate-50 rounded p-2 border border-slate-100 text-[10px]">
+        <div class="text-slate-500 font-semibold text-[8px] uppercase tracking-wider">Inventory Status</div>
+        <div class="font-bold text-slate-700 mt-1">Available: <span class="text-emerald-700">${availStock}</span></div>
+        <div class="text-[9px] text-slate-400 mt-0.5">On Order: ${onOrder}</div>
+      </div>
+      <div class="bg-slate-50 rounded p-2 border border-slate-100 text-[10px] text-right">
+        <div class="text-slate-500 text-left font-semibold text-[8px] uppercase tracking-wider">Commercial Meta</div>
+        <div class="font-bold text-slate-700 mt-1">WS: $${wsPrice}</div>
+        <div class="text-[9px] text-slate-400 mt-0.5">RRP (GST incl): $${rrpPrice}</div>
       </div>
     </div>
   `;
-
-  // Click handler to toggle collapsed details
-  const header = card.querySelector('.card-header');
-  const details = card.querySelector('.card-details');
-  const toggleIcon = card.querySelector('.toggle-icon');
-  
-  if (variants.length <= 1) {
-    toggleIcon.textContent = '▲';
-  }
-
-  header.addEventListener('click', () => {
-    const isHidden = details.classList.toggle('hidden');
-    toggleIcon.textContent = isHidden ? '▼' : '▲';
-  });
 
   return card;
 }
