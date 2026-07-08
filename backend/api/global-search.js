@@ -64,8 +64,8 @@ module.exports = async function (req, res) {
 
   try {
     if (activeScope === 'sales') {
-      // BLOCK A: Customer Sales Search Pipeline (Uncapped Search Queries)
-      let saleListUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(cleanQuery)}`;
+      // BLOCK A: Customer Sales Search Pipeline (Maximized window using &limit=1000)
+      let saleListUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(cleanQuery)}&limit=1000`;
       
       // Email Search Strategy: If email, fetch resolved CustomerID first
       if (cleanQuery.includes('@')) {
@@ -89,7 +89,7 @@ module.exports = async function (req, res) {
         }
 
         if (customerId) {
-          saleListUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?CustomerID=${encodeURIComponent(customerId)}`;
+          saleListUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?CustomerID=${encodeURIComponent(customerId)}&limit=1000`;
         } else {
           // No customer found for email
           return res.status(200).json([]);
@@ -107,18 +107,19 @@ module.exports = async function (req, res) {
       // Filter out VOID / Voided immediately
       let sales = rawSales.filter(s => !s.Status || (s.Status.toUpperCase() !== 'VOID' && s.Status.toUpperCase() !== 'VOIDED'));
 
-      // Sort by OrderDate descending (Newest First)
+      // Sort by OrderDate descending (Newest First) across the entire 1000-item array
       sales.sort((a, b) => {
         const da = a.OrderDate ? new Date(a.OrderDate) : new Date(0);
         const db = b.OrderDate ? new Date(b.OrderDate) : new Date(0);
         return db - da;
       });
 
-      // Slice to top 10 items
-      const slicedSales = sales.slice(0, 10);
+      // Slice the top 10 items for deep hydration to avoid timeouts/429s
+      const top10 = sales.slice(0, 10);
+      const remaining = sales.slice(10);
 
-      // Hydrate Sales details concurrently
-      const detailedSales = await Promise.all(slicedSales.map(async (sale) => {
+      // Hydrate Sales details concurrently for the top 10 items
+      const detailedTop10 = await Promise.all(top10.map(async (sale) => {
         try {
           const saleId = sale.SaleID || sale.ID || '';
           const detailRes = await fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Sale?ID=${saleId}`, { headers });
@@ -216,8 +217,11 @@ module.exports = async function (req, res) {
         }
       }));
 
-      // Return flat JSON array strictly
-      return res.status(200).json(detailedSales);
+      // Combine detailed items with the remaining sorted items, avoiding backend slice restriction
+      const fullSortedSales = [...detailedTop10, ...remaining];
+
+      // Return flat JSON array of 1000 items
+      return res.status(200).json(fullSortedSales);
 
     } else if (activeScope === 'products') {
       // BLOCK B: Product Search Pipeline (Global SKU queries to bypass Page-limited lists)
@@ -266,7 +270,6 @@ module.exports = async function (req, res) {
       const flatProductsArray = [];
 
       for (const p of products) {
-        // Filter the mapping sequence strictly: Location === 'Main Warehouse'
         const mainWhRow = availList.find(a => a && a.SKU && a.SKU.toLowerCase() === (p.SKU || '').toLowerCase() && a.Location === 'Main Warehouse');
 
         flatProductsArray.push({

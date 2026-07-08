@@ -397,13 +397,13 @@ function getCombinedSortedItems() {
     if (sortVal === 'default' || sortVal === 'name-az') {
       combinedItems.sort((a, b) => (a.data.SKU || '').localeCompare(b.data.SKU || ''));
     } else if (sortVal === 'name-za') {
-      combinedItems.sort((a, b) => (b.data.SKU || '').localeCompare(a.data.SKU || ''));
+      combinedItems.sort((a, b) => (b.data.SKU || '').localeCompare(b.data.SKU || ''));
     }
     return combinedItems;
   }
 }
 
-// Directly renders the entire returned array to the UI, removing client-side pagination
+// Directly renders the top 10 items of the returned array to keep UI lightweight (Adaptive Client-Side Slicing)
 function applyFilterAndRender() {
   const combinedItems = getCombinedSortedItems();
   const totalItems = combinedItems.length;
@@ -422,7 +422,10 @@ function applyFilterAndRender() {
   salesList.innerHTML = '';
   productsList.innerHTML = '';
 
-  combinedItems.forEach(item => {
+  // Adaptive Client-Side Slicing
+  const itemsToRender = combinedItems.slice(0, 10);
+
+  itemsToRender.forEach(item => {
     if (item.type === 'sale') {
       const card = createSaleCard(item.data);
       if (card) salesList.appendChild(card);
