@@ -627,8 +627,8 @@ function createSaleCard(sale) {
     <div class="card-header flex justify-between items-center cursor-pointer select-none">
       <div class="flex-grow pr-2">
         <h3 class="font-bold text-slate-800 text-[13px] flex items-center space-x-1.5">
-          <a href="https://inventory.dearsystems.com/Sale?ID=${escapeHTML(saleId)}" target="_blank" class="hover:underline text-slate-800 font-bold transition-colors">📋 ${escapeHTML(orderNumber)} ↗</a>
-          <a href="https://inventory.dearsystems.com/Customer?ID=${escapeHTML(sale.CustomerID || '')}" target="_blank" class="text-[10px] text-slate-400 font-normal hover:underline hover:text-sky-600 transition-colors">| ${escapeHTML(customer)} ↗</a>
+          <a href="https://inventory.dearsystems.com/Sale#Order?TaskID=${escapeHTML(saleId)}" target="_blank" class="hover:underline text-slate-800 font-bold transition-colors">📋 ${escapeHTML(orderNumber)} ↗</a>
+          <a href="https://inventory.dearsystems.com/Customer#ID=${escapeHTML(sale.CustomerID || '')}" target="_blank" class="text-[10px] text-slate-400 font-normal hover:underline hover:text-sky-600 transition-colors">| ${escapeHTML(customer)} ↗</a>
         </h3>
         <p class="text-slate-400 font-medium text-[9px] mt-0.5">${escapeHTML(orderDate)}</p>
       </div>
@@ -646,7 +646,7 @@ function createSaleCard(sale) {
         <div class="flex justify-between">
           <span class="text-slate-500">Invoice Number:</span> 
           <span class="font-bold text-slate-700">
-            <a href="https://inventory.dearsystems.com/Sale#Invoice?ID=${escapeHTML(saleId)}" target="_blank" class="hover:underline text-sky-600 font-bold hover:text-sky-800 transition-colors">${escapeHTML(invoiceNumber)} ↗</a>
+            <a href="https://inventory.dearsystems.com/Sale#Invoice?TaskID=${escapeHTML(saleId)}" target="_blank" class="hover:underline text-sky-600 font-bold hover:text-sky-800 transition-colors">${escapeHTML(invoiceNumber)} ↗</a>
           </span>
         </div>
         <div class="flex justify-between"><span class="text-slate-500">Customer Ref:</span> <span class="font-bold text-slate-700">${escapeHTML(customerReference)}</span></div>
