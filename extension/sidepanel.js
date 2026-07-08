@@ -502,8 +502,10 @@ function createProductCard(product) {
   // Build variant grid rows HTML (sorted alphabetically by SKU in backend)
   const variantsHtml = variants.map(v => {
     if (!v) return '';
-    const availStock = (v.OnHand || 0) - (v.Allocated || 0);
-    const onOrder = v.OnOrder || 0;
+    
+    // Direct stock property assignment mapping
+    const availStock = v.AvailableStock !== undefined ? v.AvailableStock : 0;
+    const onOrder = v.OnOrder !== undefined ? v.OnOrder : 0;
     const wsPrice = (v.PriceTier1 || 0).toFixed(2);
     const rrpPrice = (v.PriceTier5 || 0).toFixed(2);
     const taxRule = v.SaleTaxRule || 'N/A';

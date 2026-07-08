@@ -220,11 +220,10 @@ module.exports = async function (req, res) {
       return res.status(200).json(detailedSales);
 
     } else if (activeScope === 'products') {
-      // BLOCK B: Product Search Pipeline
-      const [productsRes, availByNameRes, availBySkuRes] = await Promise.allSettled([
+      // BLOCK B: Product Search Pipeline (with ref/productavailability SKU query)
+      const [productsRes, availRes] = await Promise.allSettled([
         fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Product?Search=${encodeURIComponent(cleanQuery)}`, { headers }),
-        fetch(`https://inventory.dearsystems.com/ExternalApi/v2/ProductAvailability?name=${encodeURIComponent(cleanQuery)}`, { headers }),
-        fetch(`https://inventory.dearsystems.com/ExternalApi/v2/ProductAvailability?sku=${encodeURIComponent(cleanQuery)}`, { headers })
+        fetch(`https://inventory.dearsystems.com/ExternalApi/v2/ref/productavailability?Sku=${encodeURIComponent(cleanQuery)}`, { headers })
       ]);
 
       let products = [];
@@ -236,7 +235,6 @@ module.exports = async function (req, res) {
         jsonPromises.push(productsRes.value.json().then(pData => {
           const rawProducts = pData.Products || [];
           const qLower = cleanQuery.toLowerCase();
-          // Filter in-memory to SKU or Name containing query case-insensitive
           products = rawProducts.filter(p =>
             (p.SKU || '').toLowerCase().includes(qLower) ||
             (p.Name || '').toLowerCase().includes(qLower)
@@ -244,41 +242,31 @@ module.exports = async function (req, res) {
         }));
       }
 
-      // Parse Availability
-      const processAvail = async (res) => {
-        if (res.status === 'fulfilled' && res.value.ok) {
-          try {
-            const data = await res.value.json();
-            const list = data.ProductAvailabilityList || [];
-            for (const item of list) {
-              if (item.SKU) {
-                availMap.set(item.SKU.toLowerCase(), {
-                  OnHand: item.OnHand || 0,
-                  Allocated: item.Allocated || 0,
-                  OnOrder: item.OnOrder || 0,
-                  Available: item.Available || 0
-                });
-              }
+      // Parse Availability from ref/productavailability
+      if (availRes.status === 'fulfilled' && availRes.value.ok) {
+        jsonPromises.push(availRes.value.json().then(data => {
+          const list = data.ProductAvailabilityList || data || [];
+          const arrayList = Array.isArray(list) ? list : (list.ProductAvailabilityList || []);
+          const targetList = Array.isArray(arrayList) ? arrayList : [];
+          for (const item of targetList) {
+            if (item.SKU) {
+              availMap.set(item.SKU.toLowerCase(), {
+                AvailableStock: item.Available !== undefined ? item.Available : 0,
+                OnOrder: item.OnOrder !== undefined ? item.OnOrder : 0
+              });
             }
-          } catch (e) {
-            console.error("Error parsing availability JSON:", e);
           }
-        }
-      };
-
-      jsonPromises.push(processAvail(availByNameRes));
-      jsonPromises.push(processAvail(availBySkuRes));
+        }).catch(e => console.error("Error parsing ref/productavailability JSON:", e)));
+      }
 
       await Promise.all(jsonPromises);
 
-      // Map stock to products
+      // Map stock to products using direct Available assignment
       for (const p of products) {
         const skuKey = (p.SKU || '').toLowerCase();
-        const stock = availMap.get(skuKey) || { OnHand: 0, Allocated: 0, OnOrder: 0, Available: 0 };
-        p.OnHand = stock.OnHand;
-        p.Allocated = stock.Allocated;
+        const stock = availMap.get(skuKey) || { AvailableStock: 0, OnOrder: 0 };
+        p.AvailableStock = stock.AvailableStock;
         p.OnOrder = stock.OnOrder;
-        p.Available = stock.Available;
       }
 
       // Group variants sharing an active family identity
@@ -292,8 +280,7 @@ module.exports = async function (req, res) {
         const variant = {
           SKU: p.SKU || 'N/A',
           Name: p.Name || 'Unnamed Product',
-          OnHand: p.OnHand !== undefined ? p.OnHand : 0,
-          Allocated: p.Allocated !== undefined ? p.Allocated : 0,
+          AvailableStock: p.AvailableStock !== undefined ? p.AvailableStock : 0,
           OnOrder: p.OnOrder !== undefined ? p.OnOrder : 0,
           PriceTier1: p.PriceTier1 !== undefined ? p.PriceTier1 : 0,
           PriceTier5: p.PriceTier5 !== undefined ? p.PriceTier5 : 0,
