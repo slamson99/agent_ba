@@ -435,43 +435,88 @@ function applyFilterAndRender() {
   resultsPanel.classList.remove('hidden');
 }
 
-// Generate Flat Product Card element (accordion logic removed)
+// Generate Collapsible Product Card element (Default minimized state showing basic stock metrics, click expands details)
 function createProductCard(product) {
   if (!product) return null;
 
+  const id = product.ID || '';
   const sku = product.SKU || 'N/A';
   const name = product.Name || 'Unnamed Product';
   const brand = product.Brand || 'N/A';
-  const tax = product.SaleTaxRule || 'N/A';
+  const barcode = product.Barcode || 'N/A';
+  
+  // Dimensions & Weight formatting
+  const width = product.Width !== undefined ? product.Width : 0;
+  const height = product.Height !== undefined ? product.Height : 0;
+  const length = product.Length !== undefined ? product.Length : 0;
+  const weight = product.Weight !== undefined ? product.Weight : 0;
+  const dimensionsStr = `Dimensions: ${width}x${height}x${length} | Weight: ${weight} kg`;
+
   const availStock = product.AvailableStock !== undefined ? product.AvailableStock : 0;
   const onOrder = product.OnOrder !== undefined ? product.OnOrder : 0;
   const wsPrice = (product.PriceTier1 || 0).toFixed(2);
   const rrpPrice = (product.PriceTier5 || 0).toFixed(2);
+  const tax = product.SaleTaxRule || 'N/A';
 
   const card = document.createElement('div');
-  card.className = 'bg-white border border-slate-200 rounded-lg p-3 shadow-sm hover:border-slate-300 transition-colors flex flex-col text-xs space-y-1.5';
+  card.className = 'bg-white border border-slate-200 rounded-lg p-3 shadow-sm hover:border-slate-300 transition-colors flex flex-col text-xs space-y-1.5 product-card';
 
   card.innerHTML = `
-    <div class="flex justify-between items-start">
-      <h3 class="font-bold text-slate-800 text-[12px] break-all leading-normal">
-        <span class="text-sky-600">📦 ${escapeHTML(sku)}</span> - ${escapeHTML(name)}
-      </h3>
-    </div>
-    <p class="text-slate-400 font-medium text-[9px]">Brand: ${escapeHTML(brand)} | Tax: ${escapeHTML(tax)}</p>
-    
-    <div class="grid grid-cols-2 gap-2 pt-1">
-      <div class="bg-slate-50 rounded p-2 border border-slate-100 text-[10px]">
-        <div class="text-slate-500 font-semibold text-[8px] uppercase tracking-wider">Inventory Status</div>
-        <div class="font-bold text-slate-700 mt-1">Available: <span class="text-emerald-700">${availStock}</span></div>
-        <div class="text-[9px] text-slate-400 mt-0.5">On Order: ${onOrder}</div>
+    <!-- Header Block (Always visible minimized view) -->
+    <div class="card-header flex justify-between items-start cursor-pointer select-none">
+      <div class="flex-grow pr-2">
+        <h3 class="font-bold text-slate-800 text-[12px] break-all leading-normal">
+          <span class="text-sky-600">📦 ${escapeHTML(sku)}</span> - 
+          <a href="https://inventory.dearsystems.com/Product#${escapeHTML(id)}" target="_blank" class="hover:underline text-blue-600 font-semibold stop-propagation">${escapeHTML(name)} ↗</a>
+        </h3>
+        <div class="flex space-x-3 text-[10px] text-slate-500 mt-1 font-medium">
+          <span>Available: <strong class="text-emerald-700 font-bold">${availStock}</strong></span>
+          <span>On Order: <strong class="text-slate-700 font-bold">${onOrder}</strong></span>
+        </div>
       </div>
-      <div class="bg-slate-50 rounded p-2 border border-slate-100 text-[10px] text-right">
-        <div class="text-slate-500 text-left font-semibold text-[8px] uppercase tracking-wider">Commercial Meta</div>
-        <div class="font-bold text-slate-700 mt-1">WS: $${wsPrice}</div>
-        <div class="text-[9px] text-slate-400 mt-0.5">RRP (GST incl): $${rrpPrice}</div>
+      <span class="toggle-icon text-slate-400 font-bold text-xs mt-0.5">▼</span>
+    </div>
+
+    <!-- Collapsible Details Block (Expanded view showing labels and metrics table) -->
+    <div class="card-details hidden pt-2.5 mt-2 border-t border-slate-100 space-y-2">
+      <div class="grid grid-cols-2 gap-2 bg-slate-50 rounded p-2 border border-slate-100 text-[10px]">
+        <div>
+          <div class="text-slate-400 font-semibold text-[8px] uppercase tracking-wider">Product Info</div>
+          <div class="text-slate-700 mt-1">Brand: <strong class="font-semibold">${escapeHTML(brand)}</strong></div>
+          <div class="text-slate-700 mt-0.5">Barcode: <strong class="font-semibold">${escapeHTML(barcode)}</strong></div>
+        </div>
+        <div class="text-right">
+          <div class="text-slate-400 font-semibold text-[8px] uppercase tracking-wider text-left pl-2 border-l border-slate-200">Pricing & Tax</div>
+          <div class="text-slate-700 mt-1 pl-2 border-l border-slate-200 text-left">WS: <strong class="font-bold">$${wsPrice}</strong></div>
+          <div class="text-slate-700 mt-0.5 pl-2 border-l border-slate-200 text-left">RRP (incl GST): <strong class="font-bold">$${rrpPrice}</strong></div>
+          <div class="text-[8px] text-slate-400 mt-0.5 pl-2 border-l border-slate-200 text-left truncate" title="${escapeHTML(tax)}">Tax: ${escapeHTML(tax)}</div>
+        </div>
+      </div>
+      
+      <div class="bg-slate-50/50 rounded p-2 border border-slate-100 text-[10px] text-slate-500 italic">
+        ${escapeHTML(dimensionsStr)}
       </div>
     </div>
   `;
+
+  // Click handler to toggle collapsed details
+  const header = card.querySelector('.card-header');
+  const details = card.querySelector('.card-details');
+  const toggleIcon = card.querySelector('.toggle-icon');
+  const stopLinks = card.querySelectorAll('.stop-propagation');
+
+  // Prevent deep link click from triggering expand/collapse accordion toggles
+  stopLinks.forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+  });
+
+  header.addEventListener('click', () => {
+    card.classList.toggle('expanded');
+    const isHidden = details.classList.toggle('hidden');
+    toggleIcon.textContent = isHidden ? '▼' : '▲';
+  });
 
   return card;
 }

@@ -233,7 +233,6 @@ module.exports = async function (req, res) {
       // Parse Products
       if (productsRes.status === 'fulfilled' && productsRes.value.ok) {
         jsonPromises.push(productsRes.value.json().then(pData => {
-          // Handle both singular Product object response or Products array
           const rawProducts = pData.Products || (pData.ID || pData.SKU ? [pData] : []);
           const qLower = cleanQuery.toLowerCase();
           products = rawProducts.filter(p =>
@@ -263,18 +262,25 @@ module.exports = async function (req, res) {
 
       await Promise.all(jsonPromises);
 
-      // Loop through catalog results and use in-memory .find() match to stitch records based on SKU
+      // Loop through catalog results and filter inventory to 'Main Warehouse' strictly
       const flatProductsArray = [];
 
       for (const p of products) {
-        const matchingAvail = availList.find(a => a && a.SKU && a.SKU.toLowerCase() === (p.SKU || '').toLowerCase());
+        // Filter the mapping sequence strictly: Location === 'Main Warehouse'
+        const mainWhRow = availList.find(a => a && a.SKU && a.SKU.toLowerCase() === (p.SKU || '').toLowerCase() && a.Location === 'Main Warehouse');
 
         flatProductsArray.push({
+          ID: p.ID || '',
           SKU: p.SKU || 'N/A',
           Name: p.Name || 'Unnamed Product',
           Brand: p.Brand || 'N/A',
-          AvailableStock: (matchingAvail && matchingAvail.Available !== undefined) ? matchingAvail.Available : 0,
-          OnOrder: (matchingAvail && matchingAvail.OnOrder !== undefined) ? matchingAvail.OnOrder : 0,
+          Barcode: p.Barcode || 'N/A',
+          Width: p.Width !== undefined ? p.Width : 0,
+          Height: p.Height !== undefined ? p.Height : 0,
+          Length: p.Length !== undefined ? p.Length : 0,
+          Weight: p.Weight !== undefined ? p.Weight : 0,
+          AvailableStock: (mainWhRow && mainWhRow.Available !== undefined) ? mainWhRow.Available : 0,
+          OnOrder: (mainWhRow && mainWhRow.OnOrder !== undefined) ? mainWhRow.OnOrder : 0,
           PriceTier1: p.PriceTier1 !== undefined ? p.PriceTier1 : 0,
           PriceTier5: p.PriceTier5 !== undefined ? p.PriceTier5 : 0,
           SaleTaxRule: p.SaleTaxRule || 'N/A'
