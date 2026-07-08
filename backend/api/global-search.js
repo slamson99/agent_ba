@@ -71,9 +71,9 @@ module.exports = async function (req, res) {
 
   try {
     if (activeScope === 'sales') {
-      // BLOCK A: Customer Sales Search Pipeline (Maximized window using &limit=1000)
+      // BLOCK A: Customer Sales Search Pipeline (Descending sorting at database level)
       const mainKeyword = tokens[0] || cleanQuery;
-      let saleListUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(mainKeyword)}&limit=1000`;
+      let saleListUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(mainKeyword)}&limit=1000&Order=Descending&OrderBy=OrderDate`;
       
       // Email Search Strategy: If email, fetch resolved CustomerID first
       if (cleanQuery.includes('@')) {
@@ -97,7 +97,7 @@ module.exports = async function (req, res) {
         }
 
         if (customerId) {
-          saleListUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?CustomerID=${encodeURIComponent(customerId)}&limit=1000`;
+          saleListUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?CustomerID=${encodeURIComponent(customerId)}&limit=1000&Order=Descending&OrderBy=OrderDate`;
         } else {
           // No customer found for email
           return res.status(200).json([]);
