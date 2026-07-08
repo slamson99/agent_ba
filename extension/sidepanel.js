@@ -445,12 +445,12 @@ function createProductCard(product) {
   const brand = product.Brand || 'N/A';
   const barcode = product.Barcode || 'N/A';
   
-  // Dimensions & Weight formatting
+  // Physical Unit Specifications (Width mm x Height mm x Length mm | Weight g)
   const width = product.Width !== undefined ? product.Width : 0;
   const height = product.Height !== undefined ? product.Height : 0;
   const length = product.Length !== undefined ? product.Length : 0;
   const weight = product.Weight !== undefined ? product.Weight : 0;
-  const dimensionsStr = `Dimensions: ${width}x${height}x${length} | Weight: ${weight} kg`;
+  const dimensionsStr = `Dimensions: ${width}mm x ${height}mm x ${length}mm | Weight: ${weight}g`;
 
   const availStock = product.AvailableStock !== undefined ? product.AvailableStock : 0;
   const onOrder = product.OnOrder !== undefined ? product.OnOrder : 0;
