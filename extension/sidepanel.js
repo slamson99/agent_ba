@@ -65,7 +65,7 @@ document.addEventListener('click', (e) => {
 
 // Tab Switching Logic
 function switchTab(tab) {
-  if (activeTab === tab) return;
+  // Always update activeTab cleanly, reset panels, and focus input instantly
   activeTab = tab;
 
   // Clear states
@@ -79,7 +79,7 @@ function switchTab(tab) {
   clearProductsBtn.classList.add('hidden');
 
   hideSuggestions();
-  resetUI();
+  resetUI(); // resets container results panel
 
   if (activeTab === 'sales') {
     // Style tabs
@@ -92,6 +92,9 @@ function switchTab(tab) {
 
     salesList.classList.remove('hidden');
     productsList.classList.add('hidden');
+
+    // Leave the input field immediately active and ready to broadcast queries
+    salesInput.focus();
   } else {
     // Style tabs
     tabProductsBtn.className = "flex-1 py-3 text-center text-xs font-bold border-b-2 border-sky-500 text-sky-600 focus:outline-none transition-all flex items-center justify-center space-x-1";
@@ -103,6 +106,9 @@ function switchTab(tab) {
 
     productsList.classList.remove('hidden');
     salesList.classList.add('hidden');
+
+    // Leave the input field immediately active and ready to broadcast queries
+    productsInput.focus();
   }
 }
 
@@ -347,6 +353,17 @@ async function executeSearch(query) {
   }
 }
 
+// Relevance matching scoring
+function getRelevanceScore(name, query) {
+  if (!name || !query) return 0;
+  const n = name.toLowerCase();
+  const q = query.toLowerCase();
+  if (n === q) return 100;
+  if (n.startsWith(q)) return 80;
+  if (n.includes(q)) return 50;
+  return 0;
+}
+
 // Filter & Sort Change listener
 if (filterSortSelect) {
   filterSortSelect.addEventListener('change', () => {
@@ -397,7 +414,7 @@ function getCombinedSortedItems() {
     if (sortVal === 'default' || sortVal === 'name-az') {
       combinedItems.sort((a, b) => (a.data.SKU || '').localeCompare(b.data.SKU || ''));
     } else if (sortVal === 'name-za') {
-      combinedItems.sort((a, b) => (b.data.SKU || '').localeCompare(b.data.SKU || ''));
+      combinedItems.sort((a, b) => (b.data.SKU || '').localeCompare(a.data.SKU || ''));
     }
     return combinedItems;
   }
@@ -551,7 +568,6 @@ function formatTrackingNumbers(trackingStr) {
 }
 
 // Generate Sale Card element (Renders collapsed by default, zero copy/download buttons, absolute check safeguards)
-// Uses strict tilde-separated single-page-app hashes for internal routing
 function createSaleCard(sale) {
   if (!sale) return null;
 

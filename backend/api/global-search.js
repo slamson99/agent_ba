@@ -71,21 +71,20 @@ module.exports = async function (req, res) {
 
   try {
     if (activeScope === 'sales') {
-      // BLOCK A: Customer Sales Search Pipeline (Descending sorting at database level)
       const mainKeyword = tokens[0] || cleanQuery;
       let saleListUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(mainKeyword)}&limit=1000&Order=Descending&OrderBy=OrderDate`;
       
-      // Email Search Strategy: If email, fetch resolved CustomerID first
+      // Email Search Strategy: detect '@' character
       if (cleanQuery.includes('@')) {
         let customerId = '';
         try {
-          const custRes = await fetch(`https://inventory.dearsystems.com/ExternalApi/v2/customer?ContactFilter=${encodeURIComponent(cleanQuery)}`, { headers });
+          const custRes = await fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Customer?ContactFilter=${encodeURIComponent(cleanQuery)}`, { headers });
           if (custRes.ok) {
             const custData = await custRes.json();
-            if (Array.isArray(custData)) {
-              customerId = custData[0] && custData[0].ID;
-            } else if (custData.CustomerList && custData.CustomerList.length > 0) {
+            if (custData.CustomerList && custData.CustomerList.length > 0) {
               customerId = custData.CustomerList[0].ID;
+            } else if (Array.isArray(custData)) {
+              customerId = custData[0] && custData[0].ID;
             } else if (custData.Customers && custData.Customers.length > 0) {
               customerId = custData.Customers[0].ID;
             } else if (custData.ID) {
@@ -99,8 +98,8 @@ module.exports = async function (req, res) {
         if (customerId) {
           saleListUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?CustomerID=${encodeURIComponent(customerId)}&limit=1000&Order=Descending&OrderBy=OrderDate`;
         } else {
-          // No customer found for email
-          return res.status(200).json([]);
+          // Fallback to standard text search across general SaleList search parameter instead of crashing/returning empty
+          saleListUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(cleanQuery)}&limit=1000&Order=Descending&OrderBy=OrderDate`;
         }
       }
 
@@ -241,14 +240,13 @@ module.exports = async function (req, res) {
         }
       }));
 
-      // Combine detailed items with the remaining sorted items, avoiding backend slice restriction
+      // Combine detailed items with the remaining sorted items
       const fullSortedSales = [...detailedTop10, ...remaining];
 
       // Return flat JSON array of 1000 items
       return res.status(200).json(fullSortedSales);
 
     } else if (activeScope === 'products') {
-      // BLOCK B: Product Search Pipeline (Order-Independent Multi-Word Search Engine)
       const mainKeyword = tokens[0] || cleanQuery;
       const [productsRes, availRes] = await Promise.allSettled([
         fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Product?Sku=${encodeURIComponent(mainKeyword)}`, { headers }),
@@ -264,7 +262,6 @@ module.exports = async function (req, res) {
         jsonPromises.push(productsRes.value.json().then(pData => {
           const rawProducts = pData.Products || (pData.ID || pData.SKU ? [pData] : []);
           
-          // Order-Independent Catalog filter: SKU or Name must contain every single token
           products = rawProducts.filter(p => {
             const sku = (p.SKU || '').toLowerCase();
             const name = (p.Name || '').toLowerCase();
