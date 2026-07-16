@@ -139,24 +139,43 @@ saveSettingsBtn.addEventListener('click', () => {
   }
 });
 
-// Customer Sales Input Trigger
-salesInput.addEventListener('input', () => {
-  const query = salesInput.value.trim();
-  
+// Universal Search Execution Handler
+function triggerSearch() {
+  const query = activeTab === 'sales' ? salesInput.value.trim() : productsInput.value.trim();
   if (query.length > 0) {
-    clearSalesBtn.classList.remove('hidden');
-  } else {
-    clearSalesBtn.classList.add('hidden');
-    resetUI();
+    clearTimeout(searchDebounceTimeout);
     hideSuggestions();
-    return;
+    executeSearch(query);
   }
+}
 
-  // Auto-Suggest on Customer Name strings
-  if (query.length > 2) {
-    showSuggestions(query);
+// Debounce search input handler
+function handleInputDebounce(inputElement) {
+  const query = inputElement.value.trim();
+  
+  if (activeTab === 'sales') {
+    if (query.length > 0) {
+      clearSalesBtn.classList.remove('hidden');
+    } else {
+      clearSalesBtn.classList.add('hidden');
+      resetUI();
+      hideSuggestions();
+      return;
+    }
+    // Auto-Suggest on Customer Name strings
+    if (query.length > 2) {
+      showSuggestions(query);
+    } else {
+      hideSuggestions();
+    }
   } else {
-    hideSuggestions();
+    if (query.length > 0) {
+      clearProductsBtn.classList.remove('hidden');
+    } else {
+      clearProductsBtn.classList.add('hidden');
+      resetUI();
+      return;
+    }
   }
 
   if (query.length > 2) {
@@ -165,16 +184,20 @@ salesInput.addEventListener('input', () => {
       executeSearch(query);
     }, 400);
   }
-});
+}
+
+salesInput.addEventListener('input', () => handleInputDebounce(salesInput));
+productsInput.addEventListener('input', () => handleInputDebounce(productsInput));
 
 salesInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') {
-    const query = salesInput.value.trim();
-    if (query.length > 0) {
-      clearTimeout(searchDebounceTimeout);
-      hideSuggestions();
-      executeSearch(query);
-    }
+    triggerSearch();
+  }
+});
+
+productsInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    triggerSearch();
   }
 });
 
@@ -183,36 +206,6 @@ clearSalesBtn.addEventListener('click', () => {
   clearSalesBtn.classList.add('hidden');
   resetUI();
   hideSuggestions();
-});
-
-// Products Input Trigger
-productsInput.addEventListener('input', () => {
-  const query = productsInput.value.trim();
-  
-  if (query.length > 0) {
-    clearProductsBtn.classList.remove('hidden');
-  } else {
-    clearProductsBtn.classList.add('hidden');
-    resetUI();
-    return;
-  }
-
-  if (query.length > 2) {
-    clearTimeout(searchDebounceTimeout);
-    searchDebounceTimeout = setTimeout(() => {
-      executeSearch(query);
-    }, 400);
-  }
-});
-
-productsInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    const query = productsInput.value.trim();
-    if (query.length > 0) {
-      clearTimeout(searchDebounceTimeout);
-      executeSearch(query);
-    }
-  }
 });
 
 clearProductsBtn.addEventListener('click', () => {
@@ -308,7 +301,7 @@ async function executeSearch(query) {
   if (!query) return;
 
   loader.classList.remove('hidden');
-  errorBanner.classList.add('hidden'); // Clear historical 429 notifications and error banners cleanly
+  errorBanner.classList.add('hidden'); // Clear historical 429 notifications cleanly
   emptyState.classList.add('hidden');
   resultsPanel.classList.add('hidden');
   searchTriageBadge.classList.add('hidden');

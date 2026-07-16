@@ -74,31 +74,25 @@ module.exports = async function (req, res) {
       const mainKeyword = tokens[0] || cleanQuery;
       let saleListUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(mainKeyword)}&limit=1000&Order=Descending&OrderBy=OrderDate`;
       
-      // Email Search Strategy: detect '@' character
+      // Email Search Strategy: detect '@' character and execute synchronous harvester loop
       if (cleanQuery.includes('@')) {
         let customerId = '';
         try {
-          const custRes = await fetch(`https://inventory.dearsystems.com/ExternalApi/v2/Customer?ContactFilter=${encodeURIComponent(cleanQuery)}`, { headers });
+          const custRes = await fetch(`https://inventory.dearsystems.com/ExternalApi/v2/customer?Search=${encodeURIComponent(cleanQuery)}`, { headers });
           if (custRes.ok) {
-            const custData = await custRes.json();
-            if (custData.CustomerList && custData.CustomerList.length > 0) {
-              customerId = custData.CustomerList[0].ID;
-            } else if (Array.isArray(custData)) {
-              customerId = custData[0] && custData[0].ID;
-            } else if (custData.Customers && custData.Customers.length > 0) {
-              customerId = custData.Customers[0].ID;
-            } else if (custData.ID) {
-              customerId = custData.ID;
+            const data = await custRes.json();
+            if (data && data.CustomerList && data.CustomerList.length > 0) {
+              customerId = data.CustomerList[0].ID;
             }
           }
         } catch (err) {
-          console.error("Failed to query customer by ContactFilter:", err);
+          console.error("Failed to query customer by Search parameter waterfall:", err);
         }
 
         if (customerId) {
           saleListUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?CustomerID=${encodeURIComponent(customerId)}&limit=1000&Order=Descending&OrderBy=OrderDate`;
         } else {
-          // Fallback to standard text search across general SaleList search parameter instead of crashing/returning empty
+          // Graceful Fallback to standard SaleList text query
           saleListUrl = `https://inventory.dearsystems.com/ExternalApi/v2/SaleList?Search=${encodeURIComponent(cleanQuery)}&limit=1000&Order=Descending&OrderBy=OrderDate`;
         }
       }
